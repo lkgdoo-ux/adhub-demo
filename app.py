@@ -69,7 +69,26 @@ def init_db():
     ])
     con.commit(); con.close()
 
+def migrate_db():
+    """기존 DB에 누락된 컬럼을 안전하게 추가"""
+    con = sqlite3.connect(DB)
+    cur = con.cursor()
+    
+    # advertisers 테이블에 created_at 컬럼 추가
+    cols = [r[1] for r in cur.execute("PRAGMA table_info(advertisers)").fetchall()]
+    if "created_at" not in cols:
+        cur.execute("ALTER TABLE advertisers ADD COLUMN created_at TEXT")
+        cur.execute("UPDATE advertisers SET created_at = datetime('now') WHERE created_at IS NULL")
+    
+    # perf 테이블에 raw_data 컬럼 추가 (v1→v2 호환)
+    cols = [r[1] for r in cur.execute("PRAGMA table_info(perf)").fetchall()]
+    if "raw_data" not in cols:
+        cur.execute("ALTER TABLE perf ADD COLUMN raw_data TEXT")
+    
+    con.commit(); con.close()
+
 init_db()
+migrate_db()
 
 def q(sql, params=(), fetch=True):
     con = sqlite3.connect(DB)
