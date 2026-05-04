@@ -121,6 +121,38 @@ GOOGLE_CONV_CANDIDATES = ["전환수","설치","사전예약"]
 FB_CORE = {"보고 시작":"date","캠페인 이름":"campaign","광고 세트 이름":"adgroup","노출":"impressions","클릭(전체)":"clicks","지출 금액 (KRW)":"cost","지출 금액 (USD)":"cost_usd"}
 FB_CONV_CANDIDATES = ["결과","페이지 참여","링크 클릭","게시물 공감","게시물 댓글","팔로우 또는 좋아요"]
 
+# ============ 컬럼 매핑 헬퍼 ============
+DATE_CANDS = ["일", "날짜", "date", "보고 시작", "보고 시작일", "Day"]
+CAMP_CANDS = ["캠페인", "캠페인 이름", "campaign", "campaign name"]
+AG_CANDS   = ["광고그룹", "광고 세트 이름", "광고세트 이름", "광고세트", "adgroup", "adset", "ad set name"]
+IMP_CANDS  = ["노출수", "노출", "impressions", "impression"]
+CLK_CANDS  = ["클릭수", "클릭(전체)", "링크 클릭", "고유 링크 클릭", "클릭", "clicks", "link clicks"]
+COST_CANDS = ["비용", "지출 금액 (KRW)", "지출 금액 (USD)", "지출 금액", "cost", "spend", "amount spent"]
+
+def guess_column(columns, candidates):
+    """후보 리스트에서 첫 번째로 일치하는 컬럼 반환 (정확 일치 → 부분 일치 순)"""
+    cols_lower = {c.lower(): c for c in columns}
+    # 정확 일치
+    for cand in candidates:
+        if cand.lower() in cols_lower:
+            return cols_lower[cand.lower()]
+    # 부분 일치
+    for cand in candidates:
+        for col in columns:
+            if cand.lower() in col.lower():
+                return col
+    return None
+
+def read_uploaded_file(file):
+    """파일을 그대로 DataFrame으로 읽기 (매핑 전)"""
+    name = file.name.lower()
+    if name.endswith(("xlsx", "xls")):
+        df = pd.read_excel(file)
+    else:
+        df = pd.read_csv(file)
+    df.columns = [str(c).strip() for c in df.columns]
+    return df
+
 def parse_file(file, platform):
     df = pd.read_excel(file) if file.name.lower().endswith(("xlsx","xls")) else pd.read_csv(file)
     df.columns = [str(c).strip() for c in df.columns]
