@@ -1750,3 +1750,101 @@ elif page == "🏢 광고주 관리":
                 q("DELETE FROM advertisers WHERE code=?", (del_code,), fetch=False)
                 st.success("삭제됨"); st.rerun()
             else: st.error("코드 불일치")
+
+# ============ 계정 관리 ============
+elif page == "👤 계정 관리":
+    st.title("👤 계정 관리")
+    if not is_admin:
+        st.error("관리자만 접근 가능합니다"); st.stop()
+
+    # ===== 계정 목록 =====
+    users_df = pd.read_sql("""
+    SELECT u.email,u.name,u.role,
+           GROUP_CONCAT(p.advertiser_code) AS advertisers
+    FROM users u
+    LEFT JOIN permissions p ON u.email=p.email
+    GROUP BY u.email
+    ORDER BY u.email
+    """, sqlite3.connect(DB))
+
+    st.subheader("📋 계정 목록")
+    st.dataframe(users_df, use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # ===== 계정 생성 =====
+    st.subheader("➕ 계정 생성")
+
+    new_email = st.text_input("이메일")
+    new_name = st.text_input("이름")
+    new_pw = st.text_input("비밀번호", type="password")
+    new_role = st.selectbox("권한", ["OWNER","MANAGER","VIEWER"])
+
+    adv_list = q("SELECT code FROM advertisers", fetch=True)
+    adv_options = [a[0] for a in adv_list]
+    sel_advs = st.multiselect("광고주 연결", adv_options)
+
+    if st.button("계정 생성"):
+        if not new_email or not new_pw:
+            st.error("이메일/비밀번호 입력 필요")
+        else:
+            try:
+                q("INSERT INTO users VALUES (?,?,?,?)",
+                  (new_email,new_name,new_role,new_pw), fetch=False)
+
+                for adv in sel_advs:
+                    q("INSERT INTO permissions VALUES (?,?,?)",
+                      (new_email,adv,new_role), fetch=False)
+
+                st.success("계정 생성 완료"); st.rerun()
+            except:
+                st.error("이미 존재하는 계정")
+
+    st.divider()
+
+    # ===== 계정 수정 =====
+    st.subheader("✏️ 계정 수정")
+
+    sel_user = st.selectbox("계정 선택", users_df["email"])
+
+    urow = users_df[users_df["email"]==sel_user].iloc[0]
+
+    edit_name = st.text_input("이름", value=urow["name"])
+    edit_role = st.selectbox("권한", ["OWNER","MANAGER","VIEWER"],
+                            index=["OWNER","MANAGER","VIEWER"].index(urow["role"]))
+
+    new_pw2 = st.text_input("새 비밀번호", type="password")
+
+    adv_list = q("SELECT code FROM advertisers", fetch=True)
+    adv_options = [a[0] for a in adv_list]
+
+    cur_advs = urow["advertisers"].split(",") if urow["advertisers"] else []
+    edit_advs = st.multiselect("광고주", adv_options, default=cur_advs)
+
+    if st.button("수정 저장"):
+        q("UPDATE users SET name=?,role=? WHERE email=?",
+          (edit_name,edit_role,sel_user), fetch=False)
+
+        if new_pw2:
+            q("UPDATE users SET password=? WHERE email=?",
+              (new_pw2,sel_user), fetch=False)
+
+        q("DELETE FROM permissions WHERE email=?", (sel_user,), fetch=False)
+
+        for adv in edit_advs:
+            q("INSERT INTO permissions VALUES (?,?,?)",
+              (sel_user,adv,edit_role), fetch=False)
+
+        st.success("수정 완료"); st.rerun()
+
+    st.divider()
+
+    # ===== 계정 삭제 =====
+    st.subheader("🗑️ 계정 삭제")
+
+    del_user = st.selectbox("삭제할 계정", users_df["email"], key="del_user")
+
+    if st.button("삭제"):
+        q("DELETE FROM permissions WHERE email=?", (del_user,), fetch=False)
+        q("DELETE FROM users WHERE email=?", (del_user,), fetch=False)
+        st.success("삭제 완료"); st.rerun()
