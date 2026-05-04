@@ -1778,7 +1778,7 @@ elif page == "👤 계정 관리":
     new_email = st.text_input("이메일")
     new_name = st.text_input("이름")
     new_pw = st.text_input("비밀번호", type="password")
-    new_role = st.selectbox("권한", ["AGENCY_ADMIN","OWNER","MANAGER","VIEWER"])
+    new_role = st.selectbox("권한", ["AGENCY_ADMIN","OWNER","MANAGER","VIEWER"], key="new_role")
 
     adv_list = q("SELECT code FROM advertisers", fetch=True)
     adv_options = [a[0] for a in adv_list]
@@ -1805,14 +1805,17 @@ elif page == "👤 계정 관리":
     # ===== 계정 수정 =====
     st.subheader("✏️ 계정 수정")
 
-    sel_user = st.selectbox("계정 선택", users_df["email"])
+    sel_user = st.selectbox("계정 선택", users_df["email"], key="select_user")
 
     urow = users_df[users_df["email"]==sel_user].iloc[0]
 
     edit_name = st.text_input("이름", value=urow["name"])
     roles = ["AGENCY_ADMIN","OWNER","MANAGER","VIEWER"]
     edit_role = st.selectbox(
-        "권한", roles,index=roles.index(urow["role"]) if urow["role"] in roles else 0)
+        "권한", 
+        roles,
+        index=roles.index(urow["role"]) if urow["role"] in roles else 0,
+        key="edit_role_select")
     new_pw2 = st.text_input("새 비밀번호", type="password")
 
     adv_list = q("SELECT code FROM advertisers", fetch=True)
