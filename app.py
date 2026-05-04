@@ -199,7 +199,7 @@ def chart_daily_metric(df, conv_label, key_prefix=""):
 
 def chart_cost_donut(df, title="매체별 광고비 비중"):
     by_pf = df.groupby("platform", as_index=False)["cost"].sum()
-    if by_pf.empty or by_pf["cost"].sum()==0: 
+    if by_pf.empty or by_pf["cost"].sum()==0:
         st.info("광고비 데이터 없음"); return
     fig = px.pie(by_pf, names="platform", values="cost", hole=0.5, title=title,
                  color="platform", color_discrete_map={"GOOGLE":"#4285F4","FACEBOOK":"#1877F2"})
@@ -218,6 +218,30 @@ def chart_campaign_bar(df, metric="cost", title="캠페인별 광고비 TOP 10")
     fig.update_layout(height=400, yaxis={"categoryorder":"total ascending"})
     st.plotly_chart(fig, use_container_width=True)
 
+# ⭐ 신규: 예산 소진율 도넛
+def render_budget_donut(spent, total, height=240):
+    remaining = max(total - spent, 0)
+    burn = safe_div(spent, total) * 100
+    fig = go.Figure(data=[go.Pie(
+        labels=["소진", "잔여"],
+        values=[spent, remaining],
+        hole=0.62,
+        marker=dict(colors=["#ef4444", "#e5e7eb"], line=dict(color="white", width=2)),
+        textinfo="none",
+        sort=False, direction="clockwise",
+    )])
+    fig.update_layout(
+        height=height,
+        margin=dict(t=10, b=10, l=10, r=10),
+        showlegend=True,
+        legend=dict(orientation="v", x=1.02, y=0.5, font=dict(size=11)),
+        annotations=[dict(
+            text=f"<b style='font-size:26px'>{burn:.1f}%</b><br><span style='font-size:11px;color:#666'>소진율</span>",
+            x=0.5, y=0.5, showarrow=False
+        )]
+    )
+    return fig
+
 def render_kpi(df, total_budget=0):
     tot_imp = int(df["impressions"].sum()); tot_clk = int(df["clicks"].sum())
     tot_cost = float(df["cost"].sum()); tot_conv = float(df["conversions"].sum())
@@ -225,21 +249,26 @@ def render_kpi(df, total_budget=0):
     cpc = safe_div(tot_cost, tot_clk); cpa = safe_div(tot_cost, tot_conv)
     labels = sorted(set(df["conv_label"].dropna().unique()))
     conv_label = "/".join(labels) if labels else "CPA"
+
     if total_budget > 0:
-        burn = safe_div(tot_cost, total_budget) * 100
-        c = st.columns(5)
-        c[0].metric("총 예산", f"₩{total_budget:,.0f}")
-        c[1].metric("소진 광고비", f"₩{tot_cost:,.0f}", f"{burn:.1f}% 소진")
-        c[2].metric("잔여 예산", f"₩{max(total_budget-tot_cost,0):,.0f}")
-        c[3].metric("노출", f"{tot_imp:,}")
-        c[4].metric("클릭", f"{tot_clk:,}")
-        c2 = st.columns(5)
-        c2[0].metric(f"전환 ({conv_label})", f"{tot_conv:,.0f}")
-        c2[1].metric("CTR", f"{ctr:.2f}%")
-        c2[2].metric("CPM", f"₩{cpm:,.0f}")
-        c2[3].metric("CPC", f"₩{cpc:,.0f}")
-        c2[4].metric(conv_label, f"₩{cpa:,.0f}" if tot_conv else "—")
-        st.progress(min(burn/100, 1.0), text=f"예산 소진율 {burn:.1f}%")
+        col_d, col_m = st.columns([1, 2])
+        with col_d:
+            st.plotly_chart(render_budget_donut(tot_cost, total_budget),
+                            use_container_width=True)
+        with col_m:
+            r1 = st.columns(3)
+            r1[0].metric("총 예산", f"₩{total_budget:,.0f}")
+            r1[1].metric("소진 광고비", f"₩{tot_cost:,.0f}")
+            r1[2].metric("잔여 예산", f"₩{max(total_budget - tot_cost, 0):,.0f}")
+            r2 = st.columns(3)
+            r2[0].metric("노출", f"{tot_imp:,}")
+            r2[1].metric("클릭", f"{tot_clk:,}")
+            r2[2].metric(f"전환 ({conv_label})", f"{tot_conv:,.0f}")
+        r3 = st.columns(4)
+        r3[0].metric("CTR", f"{ctr:.2f}%")
+        r3[1].metric("CPM", f"₩{cpm:,.0f}")
+        r3[2].metric("CPC", f"₩{cpc:,.0f}")
+        r3[3].metric(conv_label, f"₩{cpa:,.0f}" if tot_conv else "—")
     else:
         c = st.columns(4)
         c[0].metric("광고비", f"₩{tot_cost:,.0f}")
@@ -253,19 +282,66 @@ def render_kpi(df, total_budget=0):
         c2[3].metric(conv_label, f"₩{cpa:,.0f}" if tot_conv else "—")
     return conv_label
 
-def render_adgroup_table(df_sub, conv_label):
-    by_ag = df_sub.groupby("adgroup", as_index=False).agg(
-        impressions=("impressions","sum"), clicks=("clicks","sum"),
-        cost=("cost","sum"), conversions=("conversions","sum"))
-    by_ag["CTR (%)"] = by_ag.apply(lambda r: round(safe_div(r.clicks,r.impressions)*100,2), axis=1)
-    by_ag["CPM (₩)"] = by_ag.apply(lambda r: round(safe_div(r.cost,r.impressions)*1000), axis=1)
-    by_ag["CPC (₩)"] = by_ag.apply(lambda r: round(safe_div(r.cost,r.clicks)), axis=1)
-    by_ag[f"{conv_label} (₩)"] = by_ag.apply(lambda r: round(safe_div(r.cost,r.conversions)) if r.conversions else 0, axis=1)
-    by_ag["광고비"] = by_ag["cost"].astype(int)
-    by_ag["노출"] = by_ag["impressions"]; by_ag["클릭"] = by_ag["clicks"]
-    by_ag["전환"] = by_ag["conversions"].astype(int)
-    show = by_ag[["adgroup","노출","클릭","광고비","전환","CTR (%)","CPM (₩)","CPC (₩)",f"{conv_label} (₩)"]]
-    show = show.rename(columns={"adgroup":"광고그룹"})
+# ⭐ 신규: 지표 컬럼 추가 헬퍼
+def _add_metric_cols(g, conv_label):
+    g = g.copy()
+    g["CTR (%)"] = g.apply(lambda r: round(safe_div(r["clicks"],r["impressions"])*100,2), axis=1)
+    g["CPM (₩)"] = g.apply(lambda r: round(safe_div(r["cost"],r["impressions"])*1000), axis=1)
+    g["CPC (₩)"] = g.apply(lambda r: round(safe_div(r["cost"],r["clicks"])), axis=1)
+    g[f"{conv_label} (₩)"] = g.apply(
+        lambda r: round(safe_div(r["cost"],r["conversions"])) if r["conversions"] else 0, axis=1)
+    g["광고비"] = g["cost"].astype(int)
+    g["노출"] = g["impressions"]
+    g["클릭"] = g["clicks"]
+    g["전환"] = g["conversions"].astype(int)
+    return g
+
+# ⭐ 신규: 캠페인 성과 표 (집계 단위 토글)
+def render_campaign_table(df, conv_label, key):
+    unit = st.radio("집계 단위", ["캠페인 합계", "일자별"],
+                    horizontal=True, key=f"{key}_unit")
+    if unit == "캠페인 합계":
+        g = df.groupby("campaign", as_index=False).agg(
+            impressions=("impressions","sum"), clicks=("clicks","sum"),
+            cost=("cost","sum"), conversions=("conversions","sum"))
+        g = _add_metric_cols(g, conv_label)
+        show = g[["campaign","노출","클릭","광고비","전환",
+                  "CTR (%)","CPM (₩)","CPC (₩)",f"{conv_label} (₩)"]]
+        show = show.rename(columns={"campaign":"캠페인"}).sort_values("광고비", ascending=False)
+    else:
+        g = df.groupby(["date","campaign"], as_index=False).agg(
+            impressions=("impressions","sum"), clicks=("clicks","sum"),
+            cost=("cost","sum"), conversions=("conversions","sum"))
+        g = _add_metric_cols(g, conv_label)
+        g["일자"] = pd.to_datetime(g["date"]).dt.strftime("%Y-%m-%d")
+        show = g[["일자","campaign","노출","클릭","광고비","전환",
+                  "CTR (%)","CPM (₩)","CPC (₩)",f"{conv_label} (₩)"]]
+        show = show.rename(columns={"campaign":"캠페인"}).sort_values(
+            ["일자","광고비"], ascending=[True, False])
+    st.dataframe(show, use_container_width=True, hide_index=True)
+
+# ⭐ 교체: 광고그룹 성과 표 (집계 단위 토글)
+def render_adgroup_table(df, conv_label, key):
+    unit = st.radio("집계 단위", ["광고그룹 합계", "일자별"],
+                    horizontal=True, key=f"{key}_unit")
+    if unit == "광고그룹 합계":
+        g = df.groupby("adgroup", as_index=False).agg(
+            impressions=("impressions","sum"), clicks=("clicks","sum"),
+            cost=("cost","sum"), conversions=("conversions","sum"))
+        g = _add_metric_cols(g, conv_label)
+        show = g[["adgroup","노출","클릭","광고비","전환",
+                  "CTR (%)","CPM (₩)","CPC (₩)",f"{conv_label} (₩)"]]
+        show = show.rename(columns={"adgroup":"광고그룹"}).sort_values("광고비", ascending=False)
+    else:
+        g = df.groupby(["date","adgroup"], as_index=False).agg(
+            impressions=("impressions","sum"), clicks=("clicks","sum"),
+            cost=("cost","sum"), conversions=("conversions","sum"))
+        g = _add_metric_cols(g, conv_label)
+        g["일자"] = pd.to_datetime(g["date"]).dt.strftime("%Y-%m-%d")
+        show = g[["일자","adgroup","노출","클릭","광고비","전환",
+                  "CTR (%)","CPM (₩)","CPC (₩)",f"{conv_label} (₩)"]]
+        show = show.rename(columns={"adgroup":"광고그룹"}).sort_values(
+            ["일자","광고비"], ascending=[True, False])
     st.dataframe(show, use_container_width=True, hide_index=True)
 
 # ============ 대시보드 ============
@@ -343,7 +419,7 @@ if page == "📈 대시보드" and adv_code:
                 show_camp = show_camp.rename(columns={"platform":"매체","campaign":"캠페인"})
                 show_camp = show_camp.sort_values("광고비", ascending=False)
                 st.dataframe(show_camp, use_container_width=True, hide_index=True)
-    # Google
+  # Google
     with tab_g:
         df_g = df_all[df_all["platform"]=="GOOGLE"]
         if df_g.empty:
@@ -355,17 +431,21 @@ if page == "📈 대시보드" and adv_code:
             with cc1: chart_daily_metric(df_g, conv_label, key_prefix="g")
             with cc2:
                 by_c = df_g.groupby("campaign", as_index=False)["cost"].sum()
-                fig = px.pie(by_c, names="campaign", values="cost", hole=0.4, title="캠페인별 광고비 비중",
+                fig = px.pie(by_c, names="campaign", values="cost", hole=0.4,
+                             title="캠페인별 광고비 비중",
                              color_discrete_sequence=px.colors.sequential.Blues_r)
                 fig.update_layout(height=380); st.plotly_chart(fig, use_container_width=True)
             st.divider()
-            st.subheader("📋 캠페인별 광고그룹 성과")
+            st.subheader("📋 캠페인별 성과")
+            render_campaign_table(df_g, conv_label, key="g_camp")
+            st.divider()
+            st.subheader("📁 캠페인별 광고그룹 성과")
             for camp in sorted(df_g["campaign"].unique()):
                 sub = df_g[df_g["campaign"]==camp]
                 with st.expander(f"📁 {camp}  (광고비 ₩{sub['cost'].sum():,.0f} · 노출 {int(sub['impressions'].sum()):,})"):
-                    render_adgroup_table(sub, conv_label)
+                    render_adgroup_table(sub, conv_label, key=f"g_ag_{camp}")
     
-    # Facebook
+     # Facebook
     with tab_f:
         df_f = df_all[df_all["platform"]=="FACEBOOK"]
         if df_f.empty:
@@ -377,15 +457,19 @@ if page == "📈 대시보드" and adv_code:
             with cc1: chart_daily_metric(df_f, conv_label, key_prefix="f")
             with cc2:
                 by_c = df_f.groupby("campaign", as_index=False)["cost"].sum()
-                fig = px.pie(by_c, names="campaign", values="cost", hole=0.4, title="캠페인별 광고비 비중",
+                fig = px.pie(by_c, names="campaign", values="cost", hole=0.4,
+                             title="캠페인별 광고비 비중",
                              color_discrete_sequence=px.colors.sequential.Purples_r)
                 fig.update_layout(height=380); st.plotly_chart(fig, use_container_width=True)
             st.divider()
-            st.subheader("📋 캠페인별 광고그룹 성과")
+            st.subheader("📋 캠페인별 성과")
+            render_campaign_table(df_f, conv_label, key="f_camp")
+            st.divider()
+            st.subheader("📁 캠페인별 광고그룹 성과")
             for camp in sorted(df_f["campaign"].unique()):
                 sub = df_f[df_f["campaign"]==camp]
                 with st.expander(f"📁 {camp}  (광고비 ₩{sub['cost'].sum():,.0f} · 노출 {int(sub['impressions'].sum()):,})"):
-                    render_adgroup_table(sub, conv_label)
+                    render_adgroup_table(sub, conv_label, key=f"f_ag_{camp}")
 
 # ============ 데이터 업로드 ============
 elif page == "📤 데이터 업로드" and adv_code:
