@@ -922,6 +922,18 @@ if page == "📈 대시보드" and adv_code:
                 sub = df_g[df_g["campaign"]==camp]
                 with st.expander(f"📁 {camp}  (광고비 ₩{sub['cost'].sum():,.0f} · 노출 {int(sub['impressions'].sum()):,})"):
                     render_adgroup_table(sub, conv_label, key=f"g_ag_{camp}", show_conversion=show_conv)
+                # 퍼널 분석
+            funnel_steps_g = get_funnel_steps(adv_code, "GOOGLE")
+            if funnel_steps_g:
+                st.divider()
+                st.subheader("🪜 퍼널 분석")
+                st.caption(f"설정된 단계: {' → '.join([s['label'] for s in sorted(funnel_steps_g, key=lambda x: x['order'])])}")
+                grp_g = st.radio("그룹화 기준",
+                    ["전체","캠페인","광고그룹","소재"],
+                    horizontal=True, key="g_funnel_grp")
+                grp_map = {"전체":"overall","캠페인":"campaign","광고그룹":"adgroup","소재":"creative"}
+                render_funnel_table(df_g, funnel_steps_g, group_by=grp_map[grp_g], key="g_funnel")
+                    
     # Google 광고소재
     if "google_cre" in tabd:
         with tabd["google_cre"]:
@@ -952,6 +964,17 @@ if page == "📈 대시보드" and adv_code:
                 sub = df_f[df_f["campaign"]==camp]
                 with st.expander(f"📁 {camp}  (광고비 ₩{sub['cost'].sum():,.0f} · 노출 {int(sub['impressions'].sum()):,})"):
                     render_adgroup_table(sub, conv_label, key=f"f_ag_{camp}", show_conversion=show_conv)
+            # 퍼널 분석
+            funnel_steps_f = get_funnel_steps(adv_code, "FACEBOOK")
+            if funnel_steps_f:
+                st.divider()
+                st.subheader("🪜 퍼널 분석")
+                st.caption(f"설정된 단계: {' → '.join([s['label'] for s in sorted(funnel_steps_f, key=lambda x: x['order'])])}")
+                grp_f = st.radio("그룹화 기준",
+                    ["전체","캠페인","광고그룹","소재"],
+                    horizontal=True, key="f_funnel_grp")
+                grp_map = {"전체":"overall","캠페인":"campaign","광고그룹":"adgroup","소재":"creative"}
+                render_funnel_table(df_f, funnel_steps_f, group_by=grp_map[grp_f], key="f_funnel")
 
 # Facebook 광고소재
     if "facebook_cre" in tabd:
