@@ -602,13 +602,27 @@ def get_raw_data_columns(adv_code, platform):
         except: pass
     return sorted(cols)
 
+def _ensure_funnel_table():
+    con = sqlite3.connect(DB); cur = con.cursor()
+    cur.execute("""CREATE TABLE IF NOT EXISTS funnel_mapping (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        advertiser_code TEXT NOT NULL,
+        platform TEXT NOT NULL,
+        step_order INTEGER NOT NULL,
+        column_name TEXT NOT NULL,
+        label TEXT NOT NULL,
+        cvr_base TEXT DEFAULT 'clicks'
+    )""")
+    con.commit(); con.close()
+
 def get_funnel_steps(adv_code, platform):
+    _ensure_funnel_table()
     rows = q("""SELECT step_order, column_name, label, COALESCE(cvr_base,'clicks')
                 FROM funnel_mapping WHERE advertiser_code=? AND platform=?
                 ORDER BY step_order""", (adv_code, platform))
     return [{"order": r[0], "column": r[1], "label": r[2], "cvr_base": r[3]} for r in rows]
-
 def save_funnel_steps(adv_code, platform, steps):
+    _ensure_funnel_table()
     q("DELETE FROM funnel_mapping WHERE advertiser_code=? AND platform=?",
       (adv_code, platform), fetch=False)
     for i, s in enumerate(steps, 1):
@@ -616,7 +630,7 @@ def save_funnel_steps(adv_code, platform, steps):
              (advertiser_code,platform,step_order,column_name,label,cvr_base)
              VALUES (?,?,?,?,?,?)""",
           (adv_code, platform, i, s["column"], s["label"], s["cvr_base"]), fetch=False)
-
+        
 def render_funnel_table(df, funnel_steps, group_by="overall", key=""):
     """퍼널 단계별 CPA/CVR 표 렌더링"""
     if df.empty:
