@@ -153,6 +153,7 @@ with st.sidebar:
     if my_level in ("OWNER","EDITOR") or is_admin:
         menu += ["📤 데이터 업로드", "📋 업로드 이력", "🎯 전환지표 설정"]
     if is_admin: menu.append("🏢 광고주 관리")
+    if is_admin: menu.append("👤 계정 관리")
     page = st.radio("메뉴", menu)
 
 # ============ 컬럼 매퍼 ============
