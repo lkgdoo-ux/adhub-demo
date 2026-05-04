@@ -577,6 +577,131 @@ def render_adgroup_table(df, conv_label, key, show_conversion=True):
             ["일자","광고비"], ascending=[True, False])
     st.dataframe(show, use_container_width=True, hide_index=True)
 
+# ============ 광고 소재 탭 ============
+def render_creative_tab(df_pf, platform, key_prefix, show_conv=True):
+    """광고 소재별 성과 분석 화면"""
+    df_cre = df_pf[df_pf["creative"].notna() & (df_pf["creative"] != "") & (df_pf["creative"] != "None")]
+    if df_cre.empty:
+        st.info(f"💡 {platform} 매체에 광고 소재 데이터가 없습니다.\n\n"
+                f"데이터 업로드 시 '🎨 광고 소재 컬럼'을 매핑한 뒤 다시 시도해주세요.")
+        return
+    
+    st.caption("🎨 광고 이미지·영상·텍스트별 성과를 분석합니다. "
+               "기본은 전체 데이터 기준이며, 필요 시 캠페인/광고그룹으로 필터링하세요.")
+    
+    # ===== 필터 영역 =====
+    with st.container():
+        fc1, fc2 = st.columns(2)
+        with fc1:
+            all_camps = ["(전체)"] + sorted(df_cre["campaign"].unique().tolist())
+            sel_camp = st.selectbox("📁 캠페인 필터", all_camps, key=f"{key_prefix}_camp")
+        with fc2:
+            if sel_camp == "(전체)":
+                ag_pool = df_cre
+            else:
+                ag_pool = df_cre[df_cre["campaign"] == sel_camp]
+            all_ags = ["(전체)"] + sorted(ag_pool["adgroup"].unique().tolist())
+            sel_ag = st.selectbox("📂 광고그룹 필터", all_ags, key=f"{key_prefix}_ag")
+    
+    df_f = df_cre.copy()
+    if sel_camp != "(전체)":
+        df_f = df_f[df_f["campaign"] == sel_camp]
+    if sel_ag != "(전체)":
+        df_f = df_f[df_f["adgroup"] == sel_ag]
+    
+    if df_f.empty:
+        st.warning("선택한 조건에 해당하는 소재가 없습니다."); return
+    
+    # ===== KPI =====
+    n_creatives = df_f["creative"].nunique()
+    tot_imp = int(df_f["impressions"].sum())
+    tot_clk = int(df_f["clicks"].sum())
+    tot_cost = float(df_f["cost"].sum())
+    tot_conv = float(df_f["conversions"].sum()) if "conversions" in df_f.columns else 0
+    labels = sorted(set(df_f["conv_label"].dropna().unique())) if "conv_label" in df_f.columns else []
+    conv_label = "/".join(labels) if labels else "CPA"
+    
+    k = st.columns(5 if show_conv else 4)
+    k[0].metric("소재 수", f"{n_creatives:,}")
+    k[1].metric("노출", f"{tot_imp:,}")
+    k[2].metric("클릭", f"{tot_clk:,}")
+    k[3].metric("광고비", f"₩{tot_cost:,.0f}")
+    if show_conv:
+        k[4].metric(f"전환 ({conv_label})", f"{tot_conv:,.0f}")
+    
+    st.divider()
+    
+    # ===== 소재별 성과 표 =====
+    st.subheader("🎨 소재별 성과")
+    g = df_f.groupby("creative", as_index=False).agg(
+        impressions=("impressions","sum"), clicks=("clicks","sum"),
+        cost=("cost","sum"), conversions=("conversions","sum") if show_conv else ("clicks","sum"))
+    g["CTR (%)"] = g.apply(lambda r: round(safe_div(r["clicks"], r["impressions"])*100, 2), axis=1)
+    g["CPM (₩)"] = g.apply(lambda r: round(safe_div(r["cost"], r["impressions"])*1000), axis=1)
+    g["CPC (₩)"] = g.apply(lambda r: round(safe_div(r["cost"], r["clicks"])), axis=1)
+    g["광고비"] = g["cost"].astype(int)
+    g["노출"] = g["impressions"]; g["클릭"] = g["clicks"]
+    
+    base_cols = ["creative","노출","클릭","광고비","CTR (%)","CPM (₩)","CPC (₩)"]
+    if show_conv:
+        g["전환"] = g["conversions"].astype(int)
+        g[f"CVR (%)"] = g.apply(lambda r: round(safe_div(r["conversions"], r["clicks"])*100, 2), axis=1)
+        g[f"{conv_label} (₩)"] = g.apply(
+            lambda r: round(safe_div(r["cost"], r["conversions"])) if r["conversions"] else 0, axis=1)
+        cols_show = base_cols + ["전환","CVR (%)",f"{conv_label} (₩)"]
+    else:
+        cols_show = base_cols
+    
+    show = g[cols_show].rename(columns={"creative":"소재"}).sort_values("광고비", ascending=False)
+    st.dataframe(show, use_container_width=True, hide_index=True)
+    
+    st.divider()
+    
+    # ===== 차트 =====
+    cc1, cc2 = st.columns(2)
+    with cc1:
+        st.subheader("💰 소재별 광고비 TOP 15")
+        top_cost = g.sort_values("cost", ascending=False).head(15)
+        if not top_cost.empty:
+            fig = px.bar(top_cost, x="cost", y="creative", orientation="h",
+                         color_discrete_sequence=["#4285F4" if platform=="GOOGLE" else "#1877F2"])
+            fig.update_layout(height=420, yaxis={"categoryorder":"total ascending"},
+                              showlegend=False, margin=dict(l=10, r=10, t=20, b=20))
+            st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_cost_chart")
+    with cc2:
+        st.subheader("🎯 소재별 CTR TOP 15")
+        # 노출 100 미만은 노이즈로 제외
+        top_ctr = g[g["impressions"] >= 100].sort_values("CTR (%)", ascending=False).head(15)
+        if not top_ctr.empty:
+            fig = px.bar(top_ctr, x="CTR (%)", y="creative", orientation="h",
+                         color_discrete_sequence=["#10B981"])
+            fig.update_layout(height=420, yaxis={"categoryorder":"total ascending"},
+                              showlegend=False, margin=dict(l=10, r=10, t=20, b=20))
+            st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_ctr_chart")
+        else:
+            st.caption("노출 100회 이상인 소재가 없습니다.")
+    
+    # ===== 일자별 비교 (소재 선택) =====
+    st.divider()
+    st.subheader("📈 일자별 소재 성과 비교")
+    cre_options = g.sort_values("cost", ascending=False)["creative"].tolist()
+    default_cre = cre_options[:min(5, len(cre_options))]
+    sel_cres = st.multiselect("비교할 소재 선택 (최대 권장 10개)",
+                              cre_options, default=default_cre, key=f"{key_prefix}_msel")
+    metric_pick = st.radio("지표", ["광고비","노출","클릭","CTR (%)"],
+                           horizontal=True, key=f"{key_prefix}_metric")
+    if sel_cres:
+        df_d = df_f[df_f["creative"].isin(sel_cres)]
+        daily = df_d.groupby(["date","creative"], as_index=False).agg(
+            impressions=("impressions","sum"), clicks=("clicks","sum"),
+            cost=("cost","sum"))
+        daily["CTR (%)"] = daily.apply(lambda r: round(safe_div(r["clicks"], r["impressions"])*100, 2), axis=1)
+        daily = daily.rename(columns={"cost":"광고비","impressions":"노출","clicks":"클릭"})
+        fig = px.line(daily, x="date", y=metric_pick, color="creative", markers=True)
+        fig.update_layout(height=400, hovermode="x unified",
+                          margin=dict(l=10, r=10, t=20, b=20))
+        st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_daily_chart")
+
 # ============ 대시보드 ============
 if page == "📈 대시보드" and adv_code:
     st.title(f"📈 {sel_name} — 성과 대시보드")
