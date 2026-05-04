@@ -965,6 +965,7 @@ elif page == "📤 데이터 업로드" and adv_code:
 # ============ 업로드 이력 ============
 elif page == "📋 업로드 이력" and adv_code:
     st.title("📋 업로드 이력")
+    st.caption("각 업로드 행 우측의 🗑️ 버튼으로 개별 삭제할 수 있습니다.")
     
     logs_raw = q("""SELECT id, uploaded_at, email, platform, file_name, rows,
                     COALESCE(upload_mode,'(legacy)'), COALESCE(deleted_rows,0)
@@ -973,65 +974,140 @@ elif page == "📋 업로드 이력" and adv_code:
     if not logs_raw:
         st.info("업로드 이력이 없습니다."); st.stop()
     
-    logs_df = pd.DataFrame(logs_raw, columns=["ID","업로드시각","사용자","매체","파일명","저장행수","업로드모드","삭제된행수"])
-    st.dataframe(logs_df, use_container_width=True, hide_index=True)
+    can_delete = (my_level in ("OWNER","EDITOR")) or is_admin
     
-    if my_level not in ("OWNER","EDITOR") and not is_admin:
-        st.caption("ℹ️ 이력 삭제는 OWNER / EDITOR 권한자만 가능합니다.")
-        st.stop()
+    # 같은 (광고주, 매체) 조합에 legacy 업로드가 몇 건인지 미리 카운트
+    legacy_count_per_pf = {}
+    for row in logs_raw:
+        if row[6] == '(legacy)':
+            legacy_count_per_pf[row[3]] = legacy_count_per_pf.get(row[3], 0) + 1
     
-    st.divider()
-    st.subheader("🗑️ 업로드 삭제")
-    st.caption("선택한 업로드로 들어온 데이터를 DB에서 모두 제거합니다. 다른 업로드 데이터는 영향받지 않습니다.")
+    # ===== 헤더 =====
+    h = st.columns([0.7, 1.8, 2.4, 1, 2.6, 0.9, 1.4, 0.7])
+    h[0].markdown("**ID**")
+    h[1].markdown("**업로드 시각**")
+    h[2].markdown("**사용자**")
+    h[3].markdown("**매체**")
+    h[4].markdown("**파일명**")
+    h[5].markdown("**현재 행수**")
+    h[6].markdown("**모드**")
+    h[7].markdown("**삭제**")
+    st.markdown("<hr style='margin:4px 0;border-color:#e5e7eb'>", unsafe_allow_html=True)
     
-    options = {}
+    # ===== 각 행 렌더링 =====
     for row in logs_raw:
         log_id, ts, email, pf, fname, rows, mode_str, del_rows = row
-        options[log_id] = f"#{log_id} | {ts} | {pf} | {fname} ({rows:,}행) — {email}"
-    
-    sel_id = st.selectbox(
-        "삭제할 업로드 선택",
-        list(options.keys()),
-        format_func=lambda x: options[x],
-        key="del_log_sel")
-    
-    if sel_id:
-        cnt = q("SELECT COUNT(*) FROM perf WHERE upload_log_id=?", (sel_id,))[0][0]
-        sel_info = next(r for r in logs_raw if r[0] == sel_id)
-        _, ts, email, pf, fname, rows, mode_str, _ = sel_info
         
-        st.warning(f"""
-**삭제 대상 정보**
-- 업로드 ID: `#{sel_id}`
-- 업로드 시각: `{ts}`
-- 업로더: `{email}`
-- 매체: `{pf}` · 파일명: `{fname}`
-- 등록 시 저장행수: `{rows:,}행`
-- **현재 DB에 남아 있는 행수: `{cnt:,}행`** {('⚠️ 0행 — 이미 삭제되었거나 추적 불가(legacy)' if cnt == 0 else '')}
-        """)
-        
-        if cnt == 0:
-            st.info("💡 삭제할 데이터가 없습니다. 이력 레코드만 제거하려면 아래 버튼을 사용하세요.")
-            if st.button("이력 레코드만 삭제", key="del_log_only"):
-                q("DELETE FROM upload_log WHERE id=?", (sel_id,), fetch=False)
-                st.success("이력 삭제 완료"); st.rerun()
+        # 현재 DB에 남아 있는 행수 계산
+        if mode_str == '(legacy)':
+            cur_rows = q("""SELECT COUNT(*) FROM perf
+                            WHERE advertiser_code=? AND platform=? AND upload_log_id IS NULL""",
+                         (adv_code, pf))[0][0]
+            unresolvable = legacy_count_per_pf.get(pf, 0) > 1
         else:
-            confirm = st.text_input(
-                f"확인을 위해 업로드 ID **{sel_id}** 를 그대로 입력하세요",
-                key="del_log_confirm")
-            
-            disabled = (confirm.strip() != str(sel_id))
-            if st.button("🚨 영구 삭제 실행", type="primary", disabled=disabled, key="del_log_btn"):
-                con = sqlite3.connect(DB); cur = con.cursor()
-                cur.execute("DELETE FROM perf WHERE upload_log_id=?", (sel_id,))
-                deleted = cur.rowcount
-                cur.execute("DELETE FROM upload_log WHERE id=?", (sel_id,))
-                con.commit(); con.close()
-                st.success(f"✅ {deleted:,}행 삭제 + 이력 레코드 제거 완료")
+            cur_rows = q("SELECT COUNT(*) FROM perf WHERE upload_log_id=?", (log_id,))[0][0]
+            unresolvable = False
+        
+        c = st.columns([0.7, 1.8, 2.4, 1, 2.6, 0.9, 1.4, 0.7])
+        c[0].markdown(f"`#{log_id}`")
+        c[1].markdown(f"<span style='font-size:13px'>{ts}</span>", unsafe_allow_html=True)
+        c[2].markdown(f"<span style='font-size:13px'>{email}</span>", unsafe_allow_html=True)
+        c[3].markdown(f"`{pf}`")
+        fname_short = fname if len(fname) <= 28 else fname[:25] + "..."
+        c[4].markdown(f"<span style='font-size:13px' title='{fname}'>{fname_short}</span>",
+                      unsafe_allow_html=True)
+        c[5].markdown(f"**{cur_rows:,}**")
+        mode_short = mode_str.replace("(Append)", "").replace("(Upsert by Date)", "") \
+                             .replace("(Replace All)", "").replace(" — 권장", "").strip()
+        c[6].markdown(f"<span style='font-size:12px'>{mode_short}</span>", unsafe_allow_html=True)
+        
+        if can_delete:
+            if c[7].button("🗑️", key=f"del_btn_{log_id}",
+                           help="이 업로드 데이터를 삭제합니다"):
+                st.session_state["pending_delete"] = log_id
                 st.rerun()
-            
-            if confirm and disabled:
-                st.error("입력값이 일치하지 않습니다.")
+        else:
+            c[7].markdown("—")
+    
+    if not can_delete:
+        st.caption("ℹ️ 삭제는 OWNER / EDITOR 권한자만 가능합니다.")
+        st.stop()
+    
+    # ===== 삭제 확인 다이얼로그 (선택된 경우) =====
+    pid = st.session_state.get("pending_delete")
+    if pid:
+        sel = next((r for r in logs_raw if r[0] == pid), None)
+        if not sel:
+            st.session_state.pop("pending_delete", None)
+            st.rerun()
+        
+        log_id, ts, email, pf, fname, rows, mode_str, _ = sel
+        
+        if mode_str == '(legacy)':
+            cur_rows = q("""SELECT COUNT(*) FROM perf
+                            WHERE advertiser_code=? AND platform=? AND upload_log_id IS NULL""",
+                         (adv_code, pf))[0][0]
+            unresolvable = legacy_count_per_pf.get(pf, 0) > 1
+        else:
+            cur_rows = q("SELECT COUNT(*) FROM perf WHERE upload_log_id=?", (log_id,))[0][0]
+            unresolvable = False
+        
+        st.divider()
+        st.markdown(
+            f"""<div style='background:#fef3c7;border-left:4px solid #f59e0b;
+            padding:14px 16px;border-radius:6px'>
+            <strong>🗑️ 삭제 확인 — 업로드 #{log_id}</strong><br><br>
+            <ul style='margin:0;padding-left:20px;font-size:14px'>
+              <li>업로드 시각: <code>{ts}</code></li>
+              <li>업로더: <code>{email}</code></li>
+              <li>매체: <code>{pf}</code> · 파일명: <code>{fname}</code></li>
+              <li>등록 시 저장행수: <code>{rows:,}행</code></li>
+              <li><strong>현재 DB 잔여 행수: {cur_rows:,}행</strong></li>
+            </ul></div>""",
+            unsafe_allow_html=True)
+        
+        if mode_str == '(legacy)' and unresolvable:
+            st.error(f"""⚠️ **자동 삭제 불가**
+
+이 광고주의 **{pf}** 매체에 추적 불가(legacy) 업로드가 **여러 건** 있어,
+어떤 업로드의 데이터인지 자동 구분할 수 없습니다.
+
+**해결 방법 (택 1)**:
+1. **데이터 업로드** 메뉴 → **③ 매체 전체 초기화** 모드로 새 파일 업로드 (기존 legacy 데이터 모두 삭제됨)
+2. **광고주 관리** → 광고주 삭제 후 재등록
+3. 아래 **이력 레코드만 삭제** 버튼으로 이력만 정리 (실제 데이터는 그대로)
+""")
+            ec1, ec2, _ = st.columns([1.2, 1, 4])
+            with ec1:
+                if st.button("📝 이력 레코드만 삭제", key=f"legacy_log_only_{pid}"):
+                    q("DELETE FROM upload_log WHERE id=?", (pid,), fetch=False)
+                    st.session_state.pop("pending_delete", None)
+                    st.success("이력 레코드 삭제 완료"); st.rerun()
+            with ec2:
+                if st.button("❌ 취소", key=f"legacy_cancel_{pid}"):
+                    st.session_state.pop("pending_delete", None); st.rerun()
+        else:
+            if cur_rows == 0:
+                st.info("💡 데이터는 이미 비어있습니다. 이력 레코드만 제거됩니다.")
+            cc1, cc2, _ = st.columns([1, 1, 4])
+            with cc1:
+                if st.button("✅ 삭제 확정", type="primary", key=f"confirm_{pid}"):
+                    con = sqlite3.connect(DB); cur = con.cursor()
+                    if mode_str == '(legacy)':
+                        cur.execute("""DELETE FROM perf WHERE advertiser_code=? AND platform=?
+                                       AND upload_log_id IS NULL""", (adv_code, pf))
+                    else:
+                        cur.execute("DELETE FROM perf WHERE upload_log_id=?", (log_id,))
+                    deleted = cur.rowcount
+                    cur.execute("DELETE FROM upload_log WHERE id=?", (log_id,))
+                    con.commit(); con.close()
+                    st.session_state.pop("pending_delete", None)
+                    st.success(f"✅ {deleted:,}행 + 이력 삭제 완료")
+                    st.rerun()
+            with cc2:
+                if st.button("❌ 취소", key=f"cancel_{pid}"):
+                    st.session_state.pop("pending_delete", None); st.rerun()
+                    
 # ============ 전환지표 설정 ============
 elif page == "🎯 전환지표 설정" and adv_code:
     st.title("🎯 전환지표 매핑 설정")
