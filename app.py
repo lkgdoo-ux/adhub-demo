@@ -963,13 +963,13 @@ elif page == "📤 데이터 업로드" and adv_code:
                     upload_id = cur.lastrowid
                     
                     for _, r in df.iterrows():
-                        cre_val = r["creative"] if "creative" in df.columns and pd.notna(r["creative"]) else None
-                        cur.execute("""INSERT INTO perf (advertiser_code,platform,date,campaign,adgroup,
-                            impressions,clicks,cost,raw_data,upload_log_id,creative)
-                            VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                        cre_val = r["creative"] if ("creative" in df.columns and pd.notna(r["creative"])) else None
+                        cur.execute(
+                            "INSERT INTO perf (advertiser_code,platform,date,campaign,adgroup,impressions,clicks,cost,raw_data,upload_log_id,creative) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                             (adv_code, platform, r["date"], r["campaign"], r["adgroup"],
                              int(r["impressions"]), int(r["clicks"]),
-                             float(r["cost"]), r["raw_data"], upload_id, cre_val))`
+                             float(r["cost"]), r["raw_data"], upload_id, cre_val)
+                        )
                     
                     con.commit(); con.close()
                     
