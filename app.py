@@ -77,6 +77,15 @@ def migrate_db():
         cur.execute("ALTER TABLE upload_log ADD COLUMN upload_mode TEXT")
     if "deleted_rows" not in cols:
         cur.execute("ALTER TABLE upload_log ADD COLUMN deleted_rows INTEGER DEFAULT 0")
+        cur.execute("""CREATE TABLE IF NOT EXISTS funnel_mapping (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        advertiser_code TEXT NOT NULL,
+        platform TEXT NOT NULL,
+        step_order INTEGER NOT NULL,
+        column_name TEXT NOT NULL,
+        label TEXT NOT NULL,
+        cvr_base TEXT DEFAULT 'clicks'
+    )""")
     con.commit(); con.close()
 
 init_db(); migrate_db()
@@ -576,6 +585,115 @@ def render_adgroup_table(df, conv_label, key, show_conversion=True):
         show = show.rename(columns={"adgroup":"광고그룹"}).sort_values(
             ["일자","광고비"], ascending=[True, False])
     st.dataframe(show, use_container_width=True, hide_index=True)
+
+# ============ 퍼널 분석 헬퍼 ============
+def get_raw_data_columns(adv_code, platform):
+    """업로드된 raw_data에서 사용 가능한 숫자 컬럼 목록 추출"""
+    rows = q("""SELECT raw_data FROM perf
+                WHERE advertiser_code=? AND platform=? AND raw_data IS NOT NULL
+                ORDER BY id DESC LIMIT 100""", (adv_code, platform))
+    cols = set()
+    for r in rows:
+        try:
+            d = json.loads(r[0])
+            for k, v in d.items():
+                try: float(v); cols.add(k)
+                except: pass
+        except: pass
+    return sorted(cols)
+
+def get_funnel_steps(adv_code, platform):
+    rows = q("""SELECT step_order, column_name, label, COALESCE(cvr_base,'clicks')
+                FROM funnel_mapping WHERE advertiser_code=? AND platform=?
+                ORDER BY step_order""", (adv_code, platform))
+    return [{"order": r[0], "column": r[1], "label": r[2], "cvr_base": r[3]} for r in rows]
+
+def save_funnel_steps(adv_code, platform, steps):
+    q("DELETE FROM funnel_mapping WHERE advertiser_code=? AND platform=?",
+      (adv_code, platform), fetch=False)
+    for i, s in enumerate(steps, 1):
+        q("""INSERT INTO funnel_mapping
+             (advertiser_code,platform,step_order,column_name,label,cvr_base)
+             VALUES (?,?,?,?,?,?)""",
+          (adv_code, platform, i, s["column"], s["label"], s["cvr_base"]), fetch=False)
+
+def render_funnel_table(df, funnel_steps, group_by="overall", key=""):
+    """퍼널 단계별 CPA/CVR 표 렌더링"""
+    if df.empty:
+        st.info("데이터가 없습니다."); return
+    if not funnel_steps:
+        st.info("설정된 퍼널 단계가 없습니다."); return
+    
+    df = df.copy()
+    parsed = df["raw_data"].fillna("{}").apply(
+        lambda x: json.loads(x) if isinstance(x, str) and x else {})
+    
+    sorted_steps = sorted(funnel_steps, key=lambda x: x["order"])
+    for step in sorted_steps:
+        col = step["column"]
+        df[f"_s{step['order']}"] = parsed.apply(
+            lambda d, c=col: float(d.get(c, 0) or 0))
+    
+    # 그룹 정의
+    if group_by == "campaign":
+        df["_grp"] = df["campaign"]; grp_label = "캠페인"
+    elif group_by == "adgroup":
+        df["_grp"] = df["campaign"].astype(str) + " > " + df["adgroup"].astype(str)
+        grp_label = "캠페인 > 광고그룹"
+    elif group_by == "creative":
+        df = df[df["creative"].notna() & (df["creative"] != "") & (df["creative"] != "None")]
+        if df.empty:
+            st.info("소재 데이터가 없습니다."); return
+        df["_grp"] = df["creative"]; grp_label = "소재"
+    else:
+        df["_grp"] = "전체"; grp_label = "구분"
+    
+    agg = {"impressions":"sum", "clicks":"sum", "cost":"sum"}
+    for step in sorted_steps:
+        agg[f"_s{step['order']}"] = "sum"
+    g = df.groupby("_grp", as_index=False).agg(agg).sort_values("cost", ascending=False)
+    
+    # Total 행 (그룹이 1개 초과일 때만)
+    if len(g) > 1:
+        total = {c: g[c].sum() for c in g.columns if c != "_grp"}
+        total["_grp"] = "Total"
+        g = pd.concat([pd.DataFrame([total]), g], ignore_index=True)
+    
+    out = pd.DataFrame()
+    out[grp_label] = g["_grp"]
+    out["Imp"] = g["impressions"].astype(int).map("{:,}".format)
+    out["Click"] = g["clicks"].astype(int).map("{:,}".format)
+    out["CTR"] = (g["clicks"] / g["impressions"].replace(0, 1) * 100).round(2).map("{:.2f}%".format)
+    out["CPC"] = (g["cost"] / g["clicks"].replace(0, 1)).round().astype(int).map("₩{:,}".format)
+    out["COST"] = g["cost"].astype(int).map("₩{:,}".format)
+    
+    for i, step in enumerate(sorted_steps):
+        scol = f"_s{step['order']}"
+        label = step["label"]
+        cvr_base = step.get("cvr_base", "clicks")
+        
+        out[label] = g[scol].astype(int).map("{:,}".format)
+        cpa = (g["cost"] / g[scol].replace(0, 1)).round().astype(int)
+        out[f"CPA·{label}"] = [f"₩{x:,}" if cnt > 0 else "—"
+                                for x, cnt in zip(cpa, g[scol])]
+        
+        if cvr_base == "previous" and i > 0:
+            prev = sorted_steps[i-1]
+            base = g[f"_s{prev['order']}"]
+            cvr_label = f"CVR·{label}(↑{prev['label']}대비)"
+        else:
+            base = g["clicks"]
+            cvr_label = f"CVR·{label}"
+        cvr = (g[scol] / base.replace(0, 1) * 100).round(2)
+        out[cvr_label] = [f"{x:.2f}%" if b > 0 else "—" for x, b in zip(cvr, base)]
+    
+    st.dataframe(out, use_container_width=True, hide_index=True)
+    
+    # CSV 다운로드
+    csv_bytes = out.to_csv(index=False).encode("utf-8-sig")
+    st.download_button("📥 CSV 다운로드", data=csv_bytes,
+        file_name=f"funnel_{key}_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+        mime="text/csv", key=f"{key}_dl")
 
 # ============ 광고 소재 탭 ============
 def render_creative_tab(df_pf, platform, key_prefix, show_conv=True):
