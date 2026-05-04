@@ -700,7 +700,6 @@ elif page == "📤 데이터 업로드" and adv_code:
     platform = st.radio("매체 선택", ["GOOGLE","FACEBOOK"], horizontal=True, key="up_pf")
     file = st.file_uploader("파일 업로드 (xlsx / csv)", type=["xlsx","xls","csv"], key="up_file")
     
-    # 파일이 바뀌면 이전 변환 결과 초기화
     if file:
         cur_sig = f"{file.name}_{file.size}"
         if st.session_state.get("up_sig") != cur_sig:
@@ -721,7 +720,6 @@ elif page == "📤 데이터 업로드" and adv_code:
             st.caption("각 표준 필드에 사용할 원본 컬럼을 지정하세요. 자동 추측된 값이 미리 선택되어 있습니다.")
             
             cols = ["(선택안함)"] + list(df_raw.columns)
-            
             def safe_idx(guess):
                 return cols.index(guess) if guess in cols else 0
             
@@ -744,14 +742,13 @@ elif page == "📤 데이터 업로드" and adv_code:
                                         help="비워두면 캠페인명을 광고그룹으로 사용")
                 col_cost = st.selectbox("💰 비용 *", cols, index=safe_idx(g_cost),   key="map_cost")
             
-            cost_unit = "KRW"
+            cost_unit = "KRW (원본 그대로)"
             if platform == "FACEBOOK":
                 cost_unit = st.radio("💱 비용 통화",
                     ["KRW (원본 그대로)", "USD → KRW 환산 (× 1,300)"],
                     horizontal=True, key="map_currency",
                     index=1 if (col_cost and "USD" in col_cost.upper()) else 0)
             
-            # 매핑되지 않은 숫자 컬럼 = 전환 후보로 raw_data에 저장
             mapped = {col_date, col_camp, col_ag, col_imp, col_clk, col_cost}
             mapped.discard("(선택안함)")
             other_numeric = []
@@ -765,6 +762,76 @@ elif page == "📤 데이터 업로드" and adv_code:
             if other_numeric:
                 st.caption(f"📌 raw_data에 함께 저장될 숫자 컬럼(전환 매핑 후보): "
                            f"**{', '.join(other_numeric)}**")
+            
+            # ====== 업로드 모드 선택 ======
+            st.divider()
+            st.subheader("📦 업로드 방식 선택")
+            st.caption("⚠️ 잘못 선택하면 데이터가 중복되거나 사라질 수 있습니다. 설명을 꼭 읽어주세요!")
+            
+            mode = st.radio(
+                "업로드 모드",
+                ["① 추가 (Append)",
+                 "② 기간 덮어쓰기 (Upsert by Date) — 권장",
+                 "③ 매체 전체 초기화 (Replace All)"],
+                index=1, key="up_mode")
+            
+            # 모드별 상세 설명
+            if mode.startswith("①"):
+                st.info("""
+**① 추가 (Append) — 기존 데이터를 그대로 두고 새 행을 덧붙입니다**
+
+✅ **이럴 때 사용하세요**
+- 처음 데이터를 올리는 경우
+- 기존에 없던 **새로운 기간**의 데이터를 누적해서 쌓을 때 (예: 1월 데이터가 이미 있고, 2월 데이터를 추가)
+- 다른 광고주·다른 매체 데이터를 처음 올릴 때
+
+⚠️ **주의 사항**
+- 같은 파일을 두 번 올리면 **모든 데이터가 2배로 부풀려집니다**
+- 같은 날짜가 이미 DB에 있는데 또 올리면 **중복 누적**됩니다
+- 광고주가 누적 파일(1일치 → 1~2일치 → 1~3일치)을 매일 보내준다면 이 모드는 절대 쓰지 마세요
+                """)
+            elif mode.startswith("②"):
+                st.success("""
+**② 기간 덮어쓰기 (Upsert by Date) — 가장 안전한 기본 옵션 ⭐**
+
+✅ **이럴 때 사용하세요**
+- 같은 매체의 데이터를 다시 올리는 모든 경우 (대부분의 상황)
+- 광고주가 **누적 파일**(1일치 → 1~2일치 → ...)을 매일 보내줄 때
+- 기존 기간 데이터에 **수정/보정**이 생겨서 다시 올려야 할 때
+- 어제 올렸는데 오늘 한 번 더 올리는 경우
+
+🔄 **동작 방식**
+1. 업로드한 파일에 포함된 **(매체 + 날짜)** 조합을 모두 추출
+2. DB에서 그 조합에 해당하는 기존 데이터를 **모두 삭제**
+3. 새 데이터를 INSERT
+
+📌 **예시**: 7/1~7/31 데이터가 이미 DB에 있고, 7/15~8/10 파일을 올리면
+   → 7/15~7/31 기존 데이터는 삭제되고 새 파일 데이터로 교체
+   → 7/1~7/14 데이터는 그대로 유지
+   → 8/1~8/10 데이터는 새로 추가
+
+⚠️ **주의**: 광고주를 잘못 선택한 채 업로드하면 다른 광고주의 같은 날짜 데이터가 사라질 수 있으니, **좌측 광고주 선택**을 꼭 확인하세요.
+                """)
+            else:
+                st.error("""
+**③ 매체 전체 초기화 (Replace All) — 위험! 신중하게 사용하세요 🚨**
+
+✅ **이럴 때 사용하세요**
+- 해당 매체 데이터를 **처음부터 완전히 다시** 정리하고 싶을 때
+- 잘못된 데이터가 누적되어 깨끗하게 리셋이 필요할 때
+- 광고주별 / 매체별로 한 번에 통합 파일이 새로 도착한 경우
+
+🔄 **동작 방식**
+1. 현재 광고주의 **선택한 매체 데이터 전체**를 DB에서 삭제
+2. 새 데이터를 INSERT
+
+⚠️ **반드시 확인**
+- 이 작업은 **되돌릴 수 없습니다**
+- 다른 매체 데이터에는 영향 없음 (예: GOOGLE 모드면 FACEBOOK 데이터는 유지)
+- 같은 광고주의 다른 모든 기간 데이터까지 사라집니다 (현재 매체에 한해서)
+
+📌 **예시**: 광고주 SCONEC + 매체 GOOGLE에서 이 모드로 업로드 → SCONEC의 모든 GOOGLE 데이터 삭제 후 새 파일로 교체
+                """)
             
             st.divider()
             
@@ -793,7 +860,6 @@ elif page == "📤 데이터 업로드" and adv_code:
                             except: d[c] = 0
                         return json.dumps(d, ensure_ascii=False)
                     df["raw_data"] = [make_raw(i) for i in df.index]
-                    
                     df = df.dropna(subset=["date"])
                     
                     if df.empty:
@@ -803,13 +869,11 @@ elif page == "📤 데이터 업로드" and adv_code:
                         st.session_state["upload_other"] = other_numeric
                         st.success(f"✅ 변환 완료 — {len(df):,}행")
             
-            # 미리보기 + 저장 버튼
             if "upload_df" in st.session_state:
                 df = st.session_state["upload_df"]
                 st.subheader("📊 변환된 데이터 미리보기")
                 st.dataframe(df.head(8), use_container_width=True, hide_index=True)
                 
-                # 검증 KPI
                 kc = st.columns(4)
                 kc[0].metric("총 행수", f"{len(df):,}")
                 kc[1].metric("총 노출", f"{int(df['impressions'].sum()):,}")
@@ -818,22 +882,78 @@ elif page == "📤 데이터 업로드" and adv_code:
                 
                 if st.session_state.get("upload_other"):
                     st.info(f"💡 감지된 전환 후보 컬럼: **{', '.join(st.session_state['upload_other'])}** "
-                            f"→ '🎯 전환지표 설정' 메뉴에서 어떤 컬럼을 전환으로 사용할지 매핑하세요.")
+                            f"→ '🎯 전환지표 설정' 메뉴에서 매핑하세요.")
                 
-                if st.button("💾 DB에 저장", type="primary"):
+                # 모드별 영향도 미리 계산해서 보여주기
+                con = sqlite3.connect(DB); cur = con.cursor()
+                if mode.startswith("②"):
+                    dates_in_file = list(df["date"].unique())
+                    placeholders = ",".join(["?"] * len(dates_in_file))
+                    will_delete = cur.execute(
+                        f"SELECT COUNT(*) FROM perf WHERE advertiser_code=? AND platform=? AND date IN ({placeholders})",
+                        (adv_code, platform, *dates_in_file)).fetchone()[0]
+                    st.warning(f"⚠️ 저장 시 기존 **{will_delete:,}행**(매체 {platform}, "
+                               f"{min(dates_in_file)}~{max(dates_in_file)})이 삭제되고 "
+                               f"새 **{len(df):,}행**으로 교체됩니다.")
+                elif mode.startswith("③"):
+                    will_delete = cur.execute(
+                        "SELECT COUNT(*) FROM perf WHERE advertiser_code=? AND platform=?",
+                        (adv_code, platform)).fetchone()[0]
+                    st.error(f"🚨 저장 시 현재 광고주의 **{platform} 매체 전체 {will_delete:,}행**이 "
+                             f"모두 삭제되고 새 **{len(df):,}행**으로 교체됩니다. 신중히 진행하세요!")
+                con.close()
+                
+                # 모드 ③은 추가 확인 절차
+                proceed = True
+                if mode.startswith("③"):
+                    confirm_text = st.text_input(
+                        f"매체 전체 초기화를 진행하려면 **{platform}** 을(를) 그대로 입력하세요",
+                        key="confirm_replace")
+                    proceed = (confirm_text.strip().upper() == platform)
+                    if not proceed and confirm_text:
+                        st.warning("입력값이 일치하지 않습니다.")
+                
+                btn_label = {"①":"💾 추가 저장", "②":"💾 덮어쓰기 저장", "③":"🚨 초기화 후 저장"}[mode[0]]
+                btn_type = "primary" if proceed else "secondary"
+                
+                if st.button(btn_label, type=btn_type, disabled=not proceed):
                     con = sqlite3.connect(DB); cur = con.cursor()
+                    deleted = 0
+                    
+                    if mode.startswith("②"):
+                        dates_in_file = list(df["date"].unique())
+                        placeholders = ",".join(["?"] * len(dates_in_file))
+                        cur.execute(
+                            f"DELETE FROM perf WHERE advertiser_code=? AND platform=? AND date IN ({placeholders})",
+                            (adv_code, platform, *dates_in_file))
+                        deleted = cur.rowcount
+                    elif mode.startswith("③"):
+                        cur.execute("DELETE FROM perf WHERE advertiser_code=? AND platform=?",
+                                    (adv_code, platform))
+                        deleted = cur.rowcount
+                    
+                    cur.execute("""INSERT INTO upload_log
+                        (email,advertiser_code,platform,file_name,rows,uploaded_at,upload_mode,deleted_rows)
+                        VALUES (?,?,?,?,?,?,?,?)""",
+                        (user["email"], adv_code, platform, file.name, len(df),
+                         datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                         mode, deleted))
+                    upload_id = cur.lastrowid
+                    
                     for _, r in df.iterrows():
                         cur.execute("""INSERT INTO perf (advertiser_code,platform,date,campaign,adgroup,
-                            impressions,clicks,cost,raw_data) VALUES (?,?,?,?,?,?,?,?,?)""",
+                            impressions,clicks,cost,raw_data,upload_log_id) VALUES (?,?,?,?,?,?,?,?,?,?)""",
                             (adv_code, platform, r["date"], r["campaign"], r["adgroup"],
                              int(r["impressions"]), int(r["clicks"]),
-                             float(r["cost"]), r["raw_data"]))
-                    cur.execute("""INSERT INTO upload_log (email,advertiser_code,platform,file_name,rows,uploaded_at)
-                        VALUES (?,?,?,?,?,?)""",
-                        (user["email"], adv_code, platform, file.name, len(df),
-                         datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                             float(r["cost"]), r["raw_data"], upload_id))
+                    
                     con.commit(); con.close()
-                    st.success(f"🎉 {len(df):,}행 저장 완료!")
+                    
+                    if deleted > 0:
+                        st.success(f"🎉 완료! 기존 {deleted:,}행 삭제 → 새 {len(df):,}행 저장")
+                    else:
+                        st.success(f"🎉 {len(df):,}행 저장 완료!")
+                    
                     for k in ["upload_df", "upload_other", "up_sig"]:
                         if k in st.session_state: del st.session_state[k]
                     st.balloons()
@@ -841,16 +961,77 @@ elif page == "📤 데이터 업로드" and adv_code:
         except Exception as e:
             st.error(f"파일 처리 오류: {e}")
             import traceback; st.code(traceback.format_exc())
-
+            
 # ============ 업로드 이력 ============
 elif page == "📋 업로드 이력" and adv_code:
     st.title("📋 업로드 이력")
-    logs = pd.read_sql("""SELECT uploaded_at AS 업로드시각, email AS 사용자,
-                          platform AS 매체, file_name AS 파일명, rows AS 행수
-                          FROM upload_log WHERE advertiser_code=? ORDER BY id DESC""",
-                       sqlite3.connect(DB), params=(adv_code,))
-    st.dataframe(logs, use_container_width=True, hide_index=True)
-
+    
+    logs_raw = q("""SELECT id, uploaded_at, email, platform, file_name, rows,
+                    COALESCE(upload_mode,'(legacy)'), COALESCE(deleted_rows,0)
+                    FROM upload_log WHERE advertiser_code=? ORDER BY id DESC""", (adv_code,))
+    
+    if not logs_raw:
+        st.info("업로드 이력이 없습니다."); st.stop()
+    
+    logs_df = pd.DataFrame(logs_raw, columns=["ID","업로드시각","사용자","매체","파일명","저장행수","업로드모드","삭제된행수"])
+    st.dataframe(logs_df, use_container_width=True, hide_index=True)
+    
+    if my_level not in ("OWNER","EDITOR") and not is_admin:
+        st.caption("ℹ️ 이력 삭제는 OWNER / EDITOR 권한자만 가능합니다.")
+        st.stop()
+    
+    st.divider()
+    st.subheader("🗑️ 업로드 삭제")
+    st.caption("선택한 업로드로 들어온 데이터를 DB에서 모두 제거합니다. 다른 업로드 데이터는 영향받지 않습니다.")
+    
+    options = {}
+    for row in logs_raw:
+        log_id, ts, email, pf, fname, rows, mode_str, del_rows = row
+        options[log_id] = f"#{log_id} | {ts} | {pf} | {fname} ({rows:,}행) — {email}"
+    
+    sel_id = st.selectbox(
+        "삭제할 업로드 선택",
+        list(options.keys()),
+        format_func=lambda x: options[x],
+        key="del_log_sel")
+    
+    if sel_id:
+        cnt = q("SELECT COUNT(*) FROM perf WHERE upload_log_id=?", (sel_id,))[0][0]
+        sel_info = next(r for r in logs_raw if r[0] == sel_id)
+        _, ts, email, pf, fname, rows, mode_str, _ = sel_info
+        
+        st.warning(f"""
+**삭제 대상 정보**
+- 업로드 ID: `#{sel_id}`
+- 업로드 시각: `{ts}`
+- 업로더: `{email}`
+- 매체: `{pf}` · 파일명: `{fname}`
+- 등록 시 저장행수: `{rows:,}행`
+- **현재 DB에 남아 있는 행수: `{cnt:,}행`** {('⚠️ 0행 — 이미 삭제되었거나 추적 불가(legacy)' if cnt == 0 else '')}
+        """)
+        
+        if cnt == 0:
+            st.info("💡 삭제할 데이터가 없습니다. 이력 레코드만 제거하려면 아래 버튼을 사용하세요.")
+            if st.button("이력 레코드만 삭제", key="del_log_only"):
+                q("DELETE FROM upload_log WHERE id=?", (sel_id,), fetch=False)
+                st.success("이력 삭제 완료"); st.rerun()
+        else:
+            confirm = st.text_input(
+                f"확인을 위해 업로드 ID **{sel_id}** 를 그대로 입력하세요",
+                key="del_log_confirm")
+            
+            disabled = (confirm.strip() != str(sel_id))
+            if st.button("🚨 영구 삭제 실행", type="primary", disabled=disabled, key="del_log_btn"):
+                con = sqlite3.connect(DB); cur = con.cursor()
+                cur.execute("DELETE FROM perf WHERE upload_log_id=?", (sel_id,))
+                deleted = cur.rowcount
+                cur.execute("DELETE FROM upload_log WHERE id=?", (sel_id,))
+                con.commit(); con.close()
+                st.success(f"✅ {deleted:,}행 삭제 + 이력 레코드 제거 완료")
+                st.rerun()
+            
+            if confirm and disabled:
+                st.error("입력값이 일치하지 않습니다.")
 # ============ 전환지표 설정 ============
 elif page == "🎯 전환지표 설정" and adv_code:
     st.title("🎯 전환지표 매핑 설정")
