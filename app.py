@@ -195,7 +195,7 @@ def chart_daily_metric(df, conv_label, key_prefix=""):
                   title=f"일자별 {metric_choice} 추이",
                   color_discrete_map={"GOOGLE":"#4285F4","FACEBOOK":"#1877F2"})
     fig.update_layout(height=380, hovermode="x unified")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_daily_chart")
 
 def chart_cost_donut(df, title="매체별 광고비 비중"):
     by_pf = df.groupby("platform", as_index=False)["cost"].sum()
@@ -205,7 +205,7 @@ def chart_cost_donut(df, title="매체별 광고비 비중"):
                  color="platform", color_discrete_map={"GOOGLE":"#4285F4","FACEBOOK":"#1877F2"})
     fig.update_traces(textposition='inside', textinfo='percent+label')
     fig.update_layout(height=350)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key=f"cost_donut_{title}")
 
 def chart_campaign_bar(df, metric="cost", title="캠페인별 광고비 TOP 10"):
     by_camp = df.groupby(["campaign","platform"], as_index=False).agg(
@@ -216,7 +216,7 @@ def chart_campaign_bar(df, metric="cost", title="캠페인별 광고비 TOP 10")
     fig = px.bar(by_camp, x=metric, y="campaign", color="platform", orientation="h",
                  title=title, color_discrete_map={"GOOGLE":"#4285F4","FACEBOOK":"#1877F2"})
     fig.update_layout(height=400, yaxis={"categoryorder":"total ascending"})
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key=f"camp_bar_{title}")
 
 # ⭐ 신규: 예산 소진율 도넛
 def render_budget_donut(spent, total, height=240):
@@ -252,9 +252,10 @@ def render_kpi(df, total_budget=0):
 
     if total_budget > 0:
         col_d, col_m = st.columns([1, 2])
-        with col_d:
+       with col_d:
             st.plotly_chart(render_budget_donut(tot_cost, total_budget),
-                            use_container_width=True)
+                            use_container_width=True,
+                            key=f"budget_donut_{tot_cost}_{total_budget}")
         with col_m:
             r1 = st.columns(3)
             r1[0].metric("총 예산", f"₩{total_budget:,.0f}")
@@ -434,7 +435,7 @@ if page == "📈 대시보드" and adv_code:
                 fig = px.pie(by_c, names="campaign", values="cost", hole=0.4,
                              title="캠페인별 광고비 비중",
                              color_discrete_sequence=px.colors.sequential.Blues_r)
-                fig.update_layout(height=380); st.plotly_chart(fig, use_container_width=True)
+                fig.update_layout(height=380); st.plotly_chart(fig, use_container_width=True, key="g_camp_pie")
             st.divider()
             st.subheader("📋 캠페인별 성과")
             render_campaign_table(df_g, conv_label, key="g_camp")
@@ -460,7 +461,7 @@ if page == "📈 대시보드" and adv_code:
                 fig = px.pie(by_c, names="campaign", values="cost", hole=0.4,
                              title="캠페인별 광고비 비중",
                              color_discrete_sequence=px.colors.sequential.Purples_r)
-                fig.update_layout(height=380); st.plotly_chart(fig, use_container_width=True)
+                fig.update_layout(height=380); st.plotly_chart(fig, use_container_width=True, key="g_camp_pie")
             st.divider()
             st.subheader("📋 캠페인별 성과")
             render_campaign_table(df_f, conv_label, key="f_camp")
