@@ -244,7 +244,7 @@ def render_budget_donut(spent, total, height=240):
     )
     return fig
 
-def render_kpi(df, total_budget=0, show_conversion=True):
+def render_kpi(df, total_budget=0, show_conversion=True, key_suffix=""):
     tot_imp = int(df["impressions"].sum()); tot_clk = int(df["clicks"].sum())
     tot_cost = float(df["cost"].sum()); tot_conv = float(df["conversions"].sum())
     ctr = safe_div(tot_clk, tot_imp)*100; cpm = safe_div(tot_cost, tot_imp)*1000
@@ -258,7 +258,7 @@ def render_kpi(df, total_budget=0, show_conversion=True):
             st.plotly_chart(
                 render_budget_donut(tot_cost, total_budget),
                 use_container_width=True,
-                key=f"budget_donut_{tot_cost}_{total_budget}"
+                key=f"budget_donut_{key_suffix}_{tot_cost}_{total_budget}"
             )
         with col_m:
             r1 = st.columns(3)
@@ -434,7 +434,7 @@ if page == "📈 대시보드" and adv_code:
             if df_s.empty:
                 st.warning("선택한 매체에 데이터가 없습니다.")
             else:
-                conv_label = render_kpi(df_s, total_budget, show_conv)
+                conv_label = render_kpi(df_s, total_budget, show_conv, key_suffix="sum")
                 st.divider()
                 chart_daily_metric(df_s, conv_label, key_prefix="sum")
                 st.divider()
@@ -449,7 +449,7 @@ if page == "📈 대시보드" and adv_code:
     if "google" in tabd:
         with tabd["google"]:
             df_g = df_all[df_all["platform"]=="GOOGLE"]
-            conv_label = render_kpi(df_g, total_budget, show_conv)
+            conv_label = render_kpi(df_g, total_budget, show_conv, key_suffix="g")
             st.divider()
             cc1, cc2 = st.columns([2,1])
             with cc1: chart_daily_metric(df_g, conv_label, key_prefix="g")
@@ -474,7 +474,7 @@ if page == "📈 대시보드" and adv_code:
     if "facebook" in tabd:
         with tabd["facebook"]:
             df_f = df_all[df_all["platform"]=="FACEBOOK"]
-            conv_label = render_kpi(df_f, total_budget, show_conv)
+            conv_label = render_kpi(df_f, total_budget, show_conv, key_suffix="f")
             st.divider()
             cc1, cc2 = st.columns([2,1])
             with cc1: chart_daily_metric(df_f, conv_label, key_prefix="f")
