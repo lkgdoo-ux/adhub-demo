@@ -66,6 +66,13 @@ def migrate_db():
     cols = [r[1] for r in cur.execute("PRAGMA table_info(perf)").fetchall()]
     if "raw_data" not in cols:
         cur.execute("ALTER TABLE perf ADD COLUMN raw_data TEXT")
+    if "upload_log_id" not in cols:
+        cur.execute("ALTER TABLE perf ADD COLUMN upload_log_id INTEGER")
+    cols = [r[1] for r in cur.execute("PRAGMA table_info(upload_log)").fetchall()]
+    if "upload_mode" not in cols:
+        cur.execute("ALTER TABLE upload_log ADD COLUMN upload_mode TEXT")
+    if "deleted_rows" not in cols:
+        cur.execute("ALTER TABLE upload_log ADD COLUMN deleted_rows INTEGER DEFAULT 0")
     con.commit(); con.close()
 
 init_db(); migrate_db()
