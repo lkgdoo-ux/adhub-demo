@@ -252,7 +252,7 @@ def render_kpi(df, total_budget=0):
 
     if total_budget > 0:
         col_d, col_m = st.columns([1, 2])
-       with col_d:
+        with col_d:
             st.plotly_chart(render_budget_donut(tot_cost, total_budget),
                             use_container_width=True,
                             key=f"budget_donut_{tot_cost}_{total_budget}")
