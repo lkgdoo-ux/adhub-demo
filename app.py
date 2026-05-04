@@ -1260,12 +1260,14 @@ elif page == "🏢 광고주 관리":
     advs = pd.read_sql("""SELECT code AS 코드, name AS 이름,
                           COALESCE(total_budget,0) AS 총예산,
                           COALESCE(show_conversion,1) AS 전환표시,
+                          COALESCE(show_creative,0) AS 소재표시,
                           created_at AS 생성일
                           FROM advertisers ORDER BY created_at DESC""", sqlite3.connect(DB))
     st.subheader(f"등록된 광고주 ({len(advs)}개)")
     advs_show = advs.copy()
     advs_show["총예산"] = advs_show["총예산"].apply(lambda x: f"₩{x:,.0f}")
     advs_show["전환표시"] = advs_show["전환표시"].apply(lambda x: "✅ 표시" if x else "❌ 숨김")
+    advs_show["소재표시"] = advs_show["소재표시"].apply(lambda x: "✅ 표시" if x else "❌ 숨김")
     st.dataframe(advs_show, use_container_width=True, hide_index=True)
     st.divider()
 
@@ -1275,22 +1277,28 @@ elif page == "🏢 광고주 관리":
         with c1: new_code = st.text_input("코드 (예: GAME_C)")
         with c2: new_name = st.text_input("이름")
         with c3: new_budget = st.number_input("총 예산 (₩)", min_value=0, step=100000, value=0)
-        new_show_conv = st.checkbox("전환지표(CPI/CPA 등) 표시", value=True,
-            help="끄면 대시보드에서 전환·CPA·CPI 컬럼이 모두 숨겨집니다.")
+        cc1, cc2 = st.columns(2)
+        with cc1:
+            new_show_conv = st.checkbox("전환지표(CPI/CPA 등) 표시", value=True,
+                help="끄면 대시보드에서 전환·CPA·CPI 컬럼이 모두 숨겨집니다.")
+        with cc2:
+            new_show_cre = st.checkbox("광고 소재 분석 탭 표시", value=False,
+                help="켜면 '구글_광고소재', '페이스북_광고소재' 탭이 활성화됩니다. 소재 컬럼이 포함된 데이터를 업로드해야 합니다.")
         if st.form_submit_button("추가", type="primary"):
             if not new_code or not new_name: st.error("코드와 이름을 입력하세요")
             else:
                 try:
-                    q("INSERT INTO advertisers (code,name,total_budget,show_conversion) VALUES (?,?,?,?)",
+                    q("""INSERT INTO advertisers (code,name,total_budget,show_conversion,show_creative)
+                         VALUES (?,?,?,?,?)""",
                       (new_code.strip().upper(), new_name.strip(), float(new_budget),
-                       1 if new_show_conv else 0), fetch=False)
+                       1 if new_show_conv else 0, 1 if new_show_cre else 0), fetch=False)
                     q("INSERT OR IGNORE INTO permissions VALUES (?,?,?)",
                       (user["email"], new_code.strip().upper(), "OWNER"), fetch=False)
                     st.success(f"'{new_name}' 추가 완료"); st.rerun()
                 except sqlite3.IntegrityError: st.error("이미 존재하는 코드입니다")
     st.divider()
 
-    st.subheader("✏️ 이름 / 예산 / 전환지표 표시 편집")
+    st.subheader("✏️ 이름 / 예산 / 표시 옵션 편집")
     if not advs.empty:
         edit_code = st.selectbox("편집할 광고주", advs["코드"].tolist(),
             format_func=lambda c: f"{c} — {advs[advs['코드']==c]['이름'].iloc[0]}")
@@ -1299,12 +1307,20 @@ elif page == "🏢 광고주 관리":
         with c1: new_name2 = st.text_input("이름", value=cur_row["이름"], key="edit_name")
         with c2: new_budget2 = st.number_input("총 예산 (₩)", min_value=0, step=100000,
                                                 value=int(cur_row["총예산"]), key="edit_bud")
-        new_show2 = st.checkbox("전환지표(CPI/CPA 등) 표시",
-            value=bool(cur_row["전환표시"]), key="edit_show",
-            help="끄면 대시보드에서 전환·CPA·CPI 컬럼이 모두 숨겨집니다.")
+        cc1, cc2 = st.columns(2)
+        with cc1:
+            new_show2 = st.checkbox("전환지표(CPI/CPA 등) 표시",
+                value=bool(cur_row["전환표시"]), key="edit_show",
+                help="끄면 대시보드에서 전환·CPA·CPI 컬럼이 모두 숨겨집니다.")
+        with cc2:
+            new_show_cre2 = st.checkbox("광고 소재 분석 탭 표시",
+                value=bool(cur_row["소재표시"]), key="edit_show_cre",
+                help="켜면 '구글_광고소재', '페이스북_광고소재' 탭이 활성화됩니다.")
         if st.button("변경 저장"):
-            q("UPDATE advertisers SET name=?, total_budget=?, show_conversion=? WHERE code=?",
-              (new_name2, float(new_budget2), 1 if new_show2 else 0, edit_code), fetch=False)
+            q("""UPDATE advertisers SET name=?, total_budget=?, show_conversion=?, show_creative=?
+                 WHERE code=?""",
+              (new_name2, float(new_budget2),
+               1 if new_show2 else 0, 1 if new_show_cre2 else 0, edit_code), fetch=False)
             st.success("변경됨"); st.rerun()
     st.divider()
 
