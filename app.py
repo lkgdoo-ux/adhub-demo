@@ -192,14 +192,22 @@ def build_pdf_report(adv_code, adv_name, df_all, total_budget, show_conv):
     
     # 한글 폰트 등록 시도
     font_name = "Helvetica"
-    for path in ["/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
-                 "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-                 "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"]:
+    import os
+    candidate_paths = [
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "NanumGothic.ttf"),
+        "NanumGothic.ttf",
+        "./NanumGothic.ttf",
+        "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    ]
+    for path in candidate_paths:
         try:
-            pdfmetrics.registerFont(TTFont("Korean", path))
-            font_name = "Korean"
-            break
-        except: continue
+            if os.path.exists(path):
+                pdfmetrics.registerFont(TTFont("Korean", path))
+                font_name = "Korean"
+                break
+        except Exception:
+            continue
     
     output = io.BytesIO()
     doc = SimpleDocTemplate(output, pagesize=A4, leftMargin=2*cm, rightMargin=2*cm,
