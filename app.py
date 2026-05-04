@@ -579,6 +579,12 @@ def render_campaign_table(df, conv_label, key, show_conversion=True):
         show = g[["일자","campaign"] + base_cols + metric_cols]
         show = show.rename(columns={"campaign":"캠페인"}).sort_values(
             ["일자","광고비"], ascending=[True, False])
+    for col in show.columns:
+        if col in ["노출","클릭","전환"]:
+            show[col] = show[col].apply(lambda x: f"{int(x):,}")
+        elif col == "광고비" or "(₩)" in col:
+            show[col] = show[col].apply(lambda x: f"₩{int(x):,}")
+            
     st.dataframe(show, use_container_width=True, hide_index=True)
 
 def render_adgroup_table(df, conv_label, key, show_conversion=True):
@@ -605,6 +611,11 @@ def render_adgroup_table(df, conv_label, key, show_conversion=True):
         show = g[["일자","adgroup"] + base_cols + metric_cols]
         show = show.rename(columns={"adgroup":"광고그룹"}).sort_values(
             ["일자","광고비"], ascending=[True, False])
+    for col in show.columns:
+        if col in ["노출","클릭","전환"]:
+            show[col] = show[col].apply(lambda x: f"{int(x):,}")
+        elif col == "광고비" or "(₩)" in col:
+            show[col] = show[col].apply(lambda x: f"₩{int(x):,}")
     st.dataframe(show, use_container_width=True, hide_index=True)
 
 # ============ 퍼널 분석 헬퍼 ============
@@ -806,6 +817,11 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True):
         cols_show = base_cols
     
     show = g[cols_show].rename(columns={"creative":"소재"}).sort_values("광고비", ascending=False)
+    for col in show.columns:
+        if col in ["노출","클릭","전환"]:
+            show[col] = show[col].apply(lambda x: f"{int(x):,}")
+        elif col == "광고비" or "(₩)" in col:
+            show[col] = show[col].apply(lambda x: f"₩{int(x):,}") 
     st.dataframe(show, use_container_width=True, hide_index=True)
     
     st.divider()
