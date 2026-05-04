@@ -177,6 +177,155 @@ def compute_metrics(df, mapping):
     df["conv_label"] = df.apply(get_label, axis=1)
     df["conv_column"] = df.apply(get_col, axis=1)
     return df
+# ============ PDF 리포트 생성 ============
+import io
+
+def build_pdf_report(adv_code, adv_name, df_all, total_budget, show_conv):
+    """간단한 PDF 리포트 (표지 + 예산 + KPI + 차트 + 캠페인 TOP 15)"""
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, PageBreak
+    from reportlab.lib.units import cm
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    
+    # 한글 폰트 등록 시도
+    font_name = "Helvetica"
+    for path in ["/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+                 "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+                 "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"]:
+        try:
+            pdfmetrics.registerFont(TTFont("Korean", path))
+            font_name = "Korean"
+            break
+        except: continue
+    
+    output = io.BytesIO()
+    doc = SimpleDocTemplate(output, pagesize=A4, leftMargin=2*cm, rightMargin=2*cm,
+                            topMargin=2*cm, bottomMargin=2*cm)
+    
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle("title", parent=styles["Title"], fontName=font_name,
+                                  fontSize=22, textColor=colors.HexColor("#1F2937"), spaceAfter=20)
+    h2_style = ParagraphStyle("h2", parent=styles["Heading2"], fontName=font_name,
+                               fontSize=14, textColor=colors.HexColor("#1F2937"),
+                               spaceAfter=12, spaceBefore=12)
+    body_style = ParagraphStyle("body", parent=styles["BodyText"], fontName=font_name, fontSize=10)
+    
+    story = []
+    
+    tot_imp = int(df_all["impressions"].sum())
+    tot_clk = int(df_all["clicks"].sum())
+    tot_cost = float(df_all["cost"].sum())
+    tot_conv = float(df_all["conversions"].sum())
+    burn = safe_div(tot_cost, total_budget) * 100 if total_budget else 0
+    period = f"{df_all['date'].min().strftime('%Y-%m-%d')} ~ {df_all['date'].max().strftime('%Y-%m-%d')}"
+    labels = sorted(set(df_all["conv_label"].dropna().unique()))
+    conv_label = "/".join(labels) if labels else "CPA"
+    
+    # 표지
+    story.append(Paragraph(f"📊 {adv_name}", title_style))
+    story.append(Paragraph("광고 성과 리포트", h2_style))
+    story.append(Spacer(1, 12))
+    story.append(Paragraph(f"기간: {period}", body_style))
+    story.append(Paragraph(f"매체: {', '.join(sorted(df_all['platform'].unique()))}", body_style))
+    story.append(Paragraph(f"생성일: {datetime.now().strftime('%Y-%m-%d %H:%M')}", body_style))
+    story.append(Spacer(1, 18))
+    
+    # 예산 요약
+    if total_budget:
+        story.append(Paragraph("예산 현황", h2_style))
+        budget_data = [
+            ["총 예산", f"₩{total_budget:,.0f}"],
+            ["사용 예산", f"₩{tot_cost:,.0f}"],
+            ["남은 예산", f"₩{max(total_budget - tot_cost, 0):,.0f}"],
+            ["소진율", f"{burn:.1f}%"],
+        ]
+        t = Table(budget_data, colWidths=[5*cm, 6*cm])
+        t.setStyle(TableStyle([
+            ("FONTNAME", (0,0), (-1,-1), font_name),
+            ("FONTSIZE", (0,0), (-1,-1), 10),
+            ("BACKGROUND", (0,0), (0,-1), colors.HexColor("#F3F4F6")),
+            ("TEXTCOLOR", (1,3), (1,3), colors.HexColor("#ef4444")),
+            ("GRID", (0,0), (-1,-1), 0.5, colors.HexColor("#d1d5db")),
+            ("PADDING", (0,0), (-1,-1), 6),
+        ]))
+        story.append(t)
+        story.append(Spacer(1, 14))
+    
+    # KPI
+    story.append(Paragraph("핵심 지표", h2_style))
+    kpi_data = [["지표", "값"],
+                ["노출 (Impression)", f"{tot_imp:,}"],
+                ["클릭 (Click)", f"{tot_clk:,}"],
+                ["광고비 (Cost)", f"₩{tot_cost:,.0f}"],
+                ["CTR", f"{safe_div(tot_clk, tot_imp)*100:.2f}%"],
+                ["CPM", f"₩{safe_div(tot_cost, tot_imp)*1000:,.0f}"],
+                ["CPC", f"₩{safe_div(tot_cost, tot_clk):,.0f}"]]
+    if show_conv:
+        kpi_data.append([f"전환 ({conv_label})", f"{tot_conv:,.0f}"])
+        kpi_data.append([conv_label, f"₩{safe_div(tot_cost, tot_conv):,.0f}" if tot_conv else "—"])
+    t = Table(kpi_data, colWidths=[6*cm, 6*cm])
+    t.setStyle(TableStyle([
+        ("FONTNAME", (0,0), (-1,-1), font_name),
+        ("FONTSIZE", (0,0), (-1,-1), 10),
+        ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#4285F4")),
+        ("TEXTCOLOR", (0,0), (-1,0), colors.white),
+        ("GRID", (0,0), (-1,-1), 0.5, colors.HexColor("#d1d5db")),
+        ("PADDING", (0,0), (-1,-1), 6),
+    ]))
+    story.append(t)
+    story.append(PageBreak())
+    
+    # 일자별 광고비 차트 (Plotly → PNG)
+    try:
+        story.append(Paragraph("일자별 광고비 추이", h2_style))
+        daily = df_all.groupby(["date","platform"], as_index=False)["cost"].sum()
+        fig = px.line(daily, x="date", y="cost", color="platform", markers=True,
+                      color_discrete_map={"GOOGLE":"#4285F4","FACEBOOK":"#1877F2"})
+        fig.update_layout(width=700, height=350, margin=dict(t=20, b=40, l=60, r=20))
+        img_bytes = fig.to_image(format="png", scale=2)
+        img = Image(io.BytesIO(img_bytes), width=16*cm, height=8*cm)
+        story.append(img)
+        story.append(Spacer(1, 10))
+    except Exception as e:
+        story.append(Paragraph(f"(차트 생성 생략: {str(e)[:60]})", body_style))
+    
+    # 캠페인별 성과 TOP 15
+    story.append(Paragraph("캠페인별 성과 TOP 15", h2_style))
+    by_camp = df_all.groupby(["platform","campaign"], as_index=False).agg(
+        impressions=("impressions","sum"), clicks=("clicks","sum"),
+        cost=("cost","sum"), conversions=("conversions","sum"))
+    by_camp = by_camp.sort_values("cost", ascending=False).head(15)
+    
+    head = ["매체","캠페인","노출","클릭","광고비","CTR"]
+    if show_conv: head.append(conv_label)
+    table_data = [head]
+    for _, row in by_camp.iterrows():
+        camp = row["campaign"][:30] + ("…" if len(row["campaign"]) > 30 else "")
+        line = [row["platform"], camp,
+                f"{int(row['impressions']):,}", f"{int(row['clicks']):,}",
+                f"₩{int(row['cost']):,}",
+                f"{safe_div(row['clicks'], row['impressions'])*100:.2f}%"]
+        if show_conv:
+            line.append(f"₩{safe_div(row['cost'], row['conversions']):,.0f}" if row["conversions"] else "—")
+        table_data.append(line)
+    t = Table(table_data, repeatRows=1)
+    t.setStyle(TableStyle([
+        ("FONTNAME", (0,0), (-1,-1), font_name),
+        ("FONTSIZE", (0,0), (-1,-1), 8),
+        ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#4285F4")),
+        ("TEXTCOLOR", (0,0), (-1,0), colors.white),
+        ("GRID", (0,0), (-1,-1), 0.3, colors.HexColor("#d1d5db")),
+        ("ALIGN", (2,1), (-1,-1), "RIGHT"),
+        ("PADDING", (0,0), (-1,-1), 4),
+    ]))
+    story.append(t)
+    
+    doc.build(story)
+    output.seek(0)
+    return output.getvalue()
 
 # ============ 차트/KPI 헬퍼 ============
 def chart_daily_metric(df, conv_label, key_prefix=""):
