@@ -740,6 +740,72 @@ elif page == "🎯 전환지표 설정" and adv_code:
                 st.success("삭제됨"); st.rerun()
 
 # ============ 광고주 관리 ============
+# ============ PDF 리포트 다운로드 ============
+elif page == "📥 PDF 리포트" and adv_code:
+    st.title("📥 PDF 리포트 다운로드")
+    st.caption("선택한 기간·매체의 데이터를 PDF로 내보냅니다.")
+    
+    raw = pd.read_sql("SELECT * FROM perf WHERE advertiser_code=?", sqlite3.connect(DB), params=(adv_code,))
+    if raw.empty:
+        st.warning("데이터가 없습니다."); st.stop()
+    raw["date"] = pd.to_datetime(raw["date"])
+    
+    adv_row = q("SELECT name, total_budget, COALESCE(show_conversion,1) FROM advertisers WHERE code=?", (adv_code,))
+    adv_name = adv_row[0][0] if adv_row else adv_code
+    total_budget = float(adv_row[0][1] or 0) if adv_row else 0
+    show_conv = bool(adv_row[0][2]) if adv_row else True
+    
+    min_d, max_d = raw["date"].min().date(), raw["date"].max().date()
+    
+    c1, c2 = st.columns(2)
+    with c1:
+        d_range = st.date_input("📅 리포트 기간", value=(min_d, max_d),
+                                min_value=min_d, max_value=max_d, key="rep_date")
+    with c2:
+        all_pfs = sorted(raw["platform"].unique())
+        sel_pfs = st.multiselect("매체 (전체=비워둠)", all_pfs, default=all_pfs, key="rep_pf")
+    
+    df_rep = raw.copy()
+    if isinstance(d_range, tuple) and len(d_range) == 2:
+        df_rep = df_rep[(df_rep["date"] >= pd.Timestamp(d_range[0])) & (df_rep["date"] <= pd.Timestamp(d_range[1]))]
+    if sel_pfs:
+        df_rep = df_rep[df_rep["platform"].isin(sel_pfs)]
+    
+    if df_rep.empty:
+        st.warning("선택한 조건에 데이터가 없습니다."); st.stop()
+    
+    mapping = get_conversion_mapping(adv_code)
+    df_rep = compute_metrics(df_rep, mapping)
+    
+    # 미리보기 KPI
+    st.subheader("📊 리포트 요약 미리보기")
+    pc = st.columns(4)
+    pc[0].metric("기간 행 수", f"{len(df_rep):,}")
+    pc[1].metric("총 노출", f"{int(df_rep['impressions'].sum()):,}")
+    pc[2].metric("총 클릭", f"{int(df_rep['clicks'].sum()):,}")
+    pc[3].metric("총 광고비", f"₩{float(df_rep['cost'].sum()):,.0f}")
+    
+    st.divider()
+    st.subheader("📄 PDF 생성")
+    st.caption("표지 + 예산 현황 + 핵심 지표 + 일자별 광고비 차트 + 캠페인 TOP 15")
+    
+    fname_base = f"{adv_code}_report_{datetime.now().strftime('%Y%m%d_%H%M')}"
+    
+    if st.button("PDF 생성", type="primary", key="gen_pdf"):
+        with st.spinner("PDF 생성 중... (차트 렌더링 30초~1분 소요)"):
+            try:
+                pdf_bytes = build_pdf_report(adv_code, adv_name, df_rep, total_budget, show_conv)
+                st.download_button(
+                    "⬇️ PDF 다운로드",
+                    data=pdf_bytes,
+                    file_name=f"{fname_base}.pdf",
+                    mime="application/pdf",
+                    key="dl_pdf"
+                )
+                st.success("생성 완료! 위 버튼을 눌러 다운로드하세요.")
+            except Exception as e:
+                st.error(f"PDF 생성 실패: {e}")
+                import traceback; st.code(traceback.format_exc())
 elif page == "🏢 광고주 관리":
     st.title("🏢 광고주 관리")
     if not is_admin: st.error("관리자 권한 필요"); st.stop()
