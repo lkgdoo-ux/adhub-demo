@@ -109,7 +109,7 @@ with st.sidebar:
         sel = st.selectbox("광고주 선택", list(adv_options.keys()))
         adv_code, my_level = adv_options[sel]; sel_name = sel
         st.info(f"권한: **{my_level}**")
-    menu = ["📈 대시보드"]
+    menu = ["📈 대시보드", "📥 PDF 리포트"]
     if my_level in ("OWNER","EDITOR") or is_admin:
         menu += ["📤 데이터 업로드", "📋 업로드 이력", "🎯 전환지표 설정"]
     if is_admin: menu.append("🏢 광고주 관리")
