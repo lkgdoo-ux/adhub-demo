@@ -297,15 +297,18 @@ if page == "📈 대시보드" and adv_code:
     
     # Summary
     with tab_sum:
-        st.subheader("매체 선택")
-        all_pfs = sorted(df_all["platform"].unique())
+        st.markdown("##### 매체 선택")
+        # GOOGLE을 항상 왼쪽에 오도록 정렬
+        priority = {"GOOGLE": 0, "FACEBOOK": 1, "NAVER": 2, "KAKAO": 3, "TIKTOK": 4}
+        all_pfs = sorted(df_all["platform"].unique(), key=lambda x: priority.get(x, 99))
         if not all_pfs:
             st.info("데이터 없음")
         else:
-            cols = st.columns(len(all_pfs))
+            # 좁은 영역에만 체크박스 배치 (전체 너비의 약 35%)
+            cb_cols = st.columns([1, 1, 1, 1, 6])
             sel_pfs = []
             for i, p in enumerate(all_pfs):
-                if cols[i].checkbox(p, value=True, key=f"sum_pf_{p}"):
+                if cb_cols[i].checkbox(p, value=True, key=f"sum_pf_{p}"):
                     sel_pfs.append(p)
             df_s = df_all[df_all["platform"].isin(sel_pfs)] if sel_pfs else df_all.iloc[0:0]
             if df_s.empty:
@@ -315,10 +318,31 @@ if page == "📈 대시보드" and adv_code:
                 st.divider()
                 chart_daily_metric(df_s, conv_label, key_prefix="sum")
                 st.divider()
-                cc1, cc2 = st.columns([1,2])
+                cc1, cc2 = st.columns([1, 2])
                 with cc1: chart_cost_donut(df_s, "매체별 광고비 비중")
                 with cc2: chart_campaign_bar(df_s, "cost", "캠페인별 광고비 TOP 10")
-    
+                st.divider()
+                # ⭐ Summary 캠페인별 효율 표 추가
+                st.subheader("📋 캠페인별 효율")
+                by_camp = df_s.groupby(["platform","campaign"], as_index=False).agg(
+                    impressions=("impressions","sum"),
+                    clicks=("clicks","sum"),
+                    cost=("cost","sum"),
+                    conversions=("conversions","sum"))
+                by_camp["CTR (%)"] = by_camp.apply(lambda r: round(safe_div(r.clicks,r.impressions)*100,2), axis=1)
+                by_camp["CPM (₩)"] = by_camp.apply(lambda r: round(safe_div(r.cost,r.impressions)*1000), axis=1)
+                by_camp["CPC (₩)"] = by_camp.apply(lambda r: round(safe_div(r.cost,r.clicks)), axis=1)
+                by_camp[f"{conv_label} (₩)"] = by_camp.apply(
+                    lambda r: round(safe_div(r.cost,r.conversions)) if r.conversions else 0, axis=1)
+                by_camp["광고비"] = by_camp["cost"].astype(int)
+                by_camp["노출"] = by_camp["impressions"]
+                by_camp["클릭"] = by_camp["clicks"]
+                by_camp["전환"] = by_camp["conversions"].astype(int)
+                show_camp = by_camp[["platform","campaign","노출","클릭","광고비","전환",
+                                     "CTR (%)","CPM (₩)","CPC (₩)",f"{conv_label} (₩)"]]
+                show_camp = show_camp.rename(columns={"platform":"매체","campaign":"캠페인"})
+                show_camp = show_camp.sort_values("광고비", ascending=False)
+                st.dataframe(show_camp, use_container_width=True, hide_index=True)
     # Google
     with tab_g:
         df_g = df_all[df_all["platform"]=="GOOGLE"]
