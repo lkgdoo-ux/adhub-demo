@@ -1450,6 +1450,100 @@ elif page == "🎯 전환지표 설정" and adv_code:
                   (adv_code, row["매체"], row["캠페인"]), fetch=False)
                 st.success("삭제됨"); st.rerun()
 
+    # ===== 다단계 퍼널 설정 =====
+    st.divider()
+    st.title("🪜 퍼널 단계 설정")
+    st.markdown("""
+**다단계 전환을 한 표에서 분석할 수 있게 단계를 정의합니다.**  
+예: 랜딩페이지 조회 → 장바구니 담기 → 결제 시작 → 구매  
+
+- 매체별로 따로 설정합니다 (Google과 Facebook의 컬럼명이 다르기 때문)
+- 각 단계는 `데이터 업로드` 시 매핑되지 않은 숫자 컬럼들 중에서 선택할 수 있습니다
+- **CVR 기준**: `클릭 대비` = 항상 클릭수 기준 / `이전 단계 대비` = 직전 퍼널 단계 기준
+""")
+    
+    fpf = st.radio("매체 선택", ["GOOGLE","FACEBOOK"], horizontal=True, key="funnel_pf")
+    avail_cols = get_raw_data_columns(adv_code, fpf)
+    
+    if not avail_cols:
+        st.info(f"💡 {fpf} 매체에 raw_data 컬럼이 없습니다.\n\n"
+                f"먼저 `데이터 업로드`에서 전환 후보 컬럼이 포함된 파일을 올려주세요.")
+    else:
+        st.caption(f"📌 사용 가능한 컬럼: {', '.join(avail_cols)}")
+        
+        sk = f"funnel_steps_{adv_code}_{fpf}"
+        if sk not in st.session_state:
+            cur_steps = get_funnel_steps(adv_code, fpf)
+            st.session_state[sk] = [
+                {"column": s["column"], "label": s["label"], "cvr_base": s["cvr_base"]}
+                for s in cur_steps
+            ]
+        
+        steps = st.session_state[sk]
+        
+        # 헤더
+        if steps:
+            h = st.columns([0.4, 2.5, 2.2, 1.6, 0.5])
+            h[0].markdown("**#**")
+            h[1].markdown("**컬럼**")
+            h[2].markdown("**라벨 (표에 표시될 이름)**")
+            h[3].markdown("**CVR 기준**")
+            h[4].markdown("**삭제**")
+        
+        # 단계별 행
+        new_steps = []
+        for i, step in enumerate(steps):
+            cr = st.columns([0.4, 2.5, 2.2, 1.6, 0.5])
+            cr[0].markdown(f"**{i+1}**")
+            sel_col = cr[1].selectbox(
+                f"col_{i}", avail_cols,
+                index=avail_cols.index(step["column"]) if step["column"] in avail_cols else 0,
+                key=f"{sk}_col_{i}", label_visibility="collapsed")
+            sel_label = cr[2].text_input(
+                f"lab_{i}", value=step["label"],
+                key=f"{sk}_lab_{i}", label_visibility="collapsed",
+                placeholder="예: 장바구니 담기")
+            sel_base = cr[3].selectbox(
+                f"base_{i}", ["clicks","previous"],
+                index=0 if step["cvr_base"]=="clicks" else 1,
+                format_func=lambda x: "클릭 대비" if x=="clicks" else "이전 단계 대비",
+                key=f"{sk}_base_{i}", label_visibility="collapsed")
+            del_clicked = cr[4].button("🗑️", key=f"{sk}_del_{i}")
+            if not del_clicked:
+                new_steps.append({"column": sel_col, "label": sel_label, "cvr_base": sel_base})
+            else:
+                st.session_state[sk] = new_steps + steps[i+1:]
+                st.rerun()
+        st.session_state[sk] = new_steps
+        
+        # 단계 추가 / 저장
+        bc1, bc2, _ = st.columns([1, 1, 4])
+        if bc1.button("➕ 단계 추가", key=f"{sk}_add"):
+            st.session_state[sk].append({"column": avail_cols[0], "label": "", "cvr_base": "clicks"})
+            st.rerun()
+        
+        if new_steps and bc2.button("💾 저장", type="primary", key=f"{sk}_save"):
+            empty = [i+1 for i, s in enumerate(new_steps) if not s["label"].strip()]
+            if empty:
+                st.error(f"❌ 라벨이 비어있는 단계: {empty}")
+            else:
+                save_funnel_steps(adv_code, fpf, new_steps)
+                st.success(f"✅ {fpf} 매체 퍼널 {len(new_steps)}단계 저장 완료")
+                st.rerun()
+        
+        # 미리보기
+        if new_steps and all(s["label"].strip() for s in new_steps):
+            st.divider()
+            st.subheader("👀 미리보기 (현재 설정 기준 — 저장 전이라도 즉시 반영)")
+            preview_df = pd.read_sql(
+                "SELECT * FROM perf WHERE advertiser_code=? AND platform=?",
+                sqlite3.connect(DB), params=(adv_code, fpf))
+            if not preview_df.empty:
+                preview_df["date"] = pd.to_datetime(preview_df["date"])
+                # order 채워주기
+                pv_steps = [{"order":i+1, **s} for i, s in enumerate(new_steps)]
+                render_funnel_table(preview_df, pv_steps, group_by="overall", key=f"prev_{fpf}")
+
 # ============ 광고주 관리 ============
 # ============ PDF 리포트 다운로드 ============
 elif page == "📥 PDF 리포트" and adv_code:
