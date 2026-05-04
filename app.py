@@ -689,30 +689,150 @@ elif page == "📤 데이터 업로드" and adv_code:
     st.title("📤 로우데이터 업로드")
     if my_level == "VIEWER":
         st.error("⛔ VIEWER 권한은 업로드할 수 없습니다."); st.stop()
-    platform = st.radio("매체 선택", ["GOOGLE","FACEBOOK"], horizontal=True)
-    file = st.file_uploader("파일 업로드 (xlsx / csv)", type=["xlsx","xls","csv"])
+    
+    platform = st.radio("매체 선택", ["GOOGLE","FACEBOOK"], horizontal=True, key="up_pf")
+    file = st.file_uploader("파일 업로드 (xlsx / csv)", type=["xlsx","xls","csv"], key="up_file")
+    
+    # 파일이 바뀌면 이전 변환 결과 초기화
+    if file:
+        cur_sig = f"{file.name}_{file.size}"
+        if st.session_state.get("up_sig") != cur_sig:
+            st.session_state["up_sig"] = cur_sig
+            for k in ["upload_df", "upload_other"]:
+                if k in st.session_state: del st.session_state[k]
+    
     if file:
         try:
-            df, conv_present = parse_file(file, platform)
-            st.success(f"✅ 파싱 성공: {len(df)}행")
-            if conv_present:
-                st.info(f"감지된 전환 후보 컬럼: **{', '.join(conv_present)}** → '🎯 전환지표 설정'에서 매핑하세요.")
-            st.dataframe(df.head(8), use_container_width=True, hide_index=True)
-            if st.button("🚀 DB에 저장", type="primary"):
-                con = sqlite3.connect(DB); cur = con.cursor()
-                for _, r in df.iterrows():
-                    cur.execute("""INSERT INTO perf (advertiser_code,platform,date,campaign,adgroup,
-                        impressions,clicks,cost,raw_data) VALUES (?,?,?,?,?,?,?,?,?)""",
-                        (adv_code, platform, r["date"], r["campaign"], r["adgroup"],
-                         int(r["impressions"] or 0), int(r["clicks"] or 0),
-                         float(r["cost"] or 0), r["raw_data"]))
-                cur.execute("""INSERT INTO upload_log (email,advertiser_code,platform,file_name,rows,uploaded_at)
-                    VALUES (?,?,?,?,?,?)""", (user["email"], adv_code, platform, file.name, len(df),
-                     datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-                con.commit(); con.close()
-                st.success(f"🎉 {len(df)}행 저장 완료!"); st.balloons()
+            df_raw = read_uploaded_file(file)
+            
+            st.success(f"✅ 파일 읽기 완료 — {len(df_raw):,}행 · {len(df_raw.columns)}개 컬럼")
+            with st.expander("📋 원본 데이터 미리보기 (상위 5행)", expanded=False):
+                st.dataframe(df_raw.head(5), use_container_width=True)
+            
+            st.divider()
+            st.subheader("🔗 컬럼 매핑")
+            st.caption("각 표준 필드에 사용할 원본 컬럼을 지정하세요. 자동 추측된 값이 미리 선택되어 있습니다.")
+            
+            cols = ["(선택안함)"] + list(df_raw.columns)
+            
+            def safe_idx(guess):
+                return cols.index(guess) if guess in cols else 0
+            
+            g_date = guess_column(df_raw.columns, DATE_CANDS)
+            g_camp = guess_column(df_raw.columns, CAMP_CANDS)
+            g_ag   = guess_column(df_raw.columns, AG_CANDS)
+            g_imp  = guess_column(df_raw.columns, IMP_CANDS)
+            g_clk  = guess_column(df_raw.columns, CLK_CANDS)
+            g_cost = guess_column(df_raw.columns, COST_CANDS)
+            
+            mc1, mc2, mc3 = st.columns(3)
+            with mc1:
+                col_date = st.selectbox("📅 일자 *", cols, index=safe_idx(g_date), key="map_date")
+                col_imp  = st.selectbox("👁️ 노출수 *", cols, index=safe_idx(g_imp),  key="map_imp")
+            with mc2:
+                col_camp = st.selectbox("📁 캠페인 *", cols, index=safe_idx(g_camp), key="map_camp")
+                col_clk  = st.selectbox("🖱️ 클릭수 *", cols, index=safe_idx(g_clk),  key="map_clk")
+            with mc3:
+                col_ag   = st.selectbox("📂 광고그룹", cols, index=safe_idx(g_ag),   key="map_ag",
+                                        help="비워두면 캠페인명을 광고그룹으로 사용")
+                col_cost = st.selectbox("💰 비용 *", cols, index=safe_idx(g_cost),   key="map_cost")
+            
+            cost_unit = "KRW"
+            if platform == "FACEBOOK":
+                cost_unit = st.radio("💱 비용 통화",
+                    ["KRW (원본 그대로)", "USD → KRW 환산 (× 1,300)"],
+                    horizontal=True, key="map_currency",
+                    index=1 if (col_cost and "USD" in col_cost.upper()) else 0)
+            
+            # 매핑되지 않은 숫자 컬럼 = 전환 후보로 raw_data에 저장
+            mapped = {col_date, col_camp, col_ag, col_imp, col_clk, col_cost}
+            mapped.discard("(선택안함)")
+            other_numeric = []
+            for c in df_raw.columns:
+                if c in mapped: continue
+                try:
+                    pd.to_numeric(df_raw[c], errors="raise")
+                    other_numeric.append(c)
+                except: continue
+            
+            if other_numeric:
+                st.caption(f"📌 raw_data에 함께 저장될 숫자 컬럼(전환 매핑 후보): "
+                           f"**{', '.join(other_numeric)}**")
+            
+            st.divider()
+            
+            if st.button("🔄 변환 실행 & 미리보기", type="secondary"):
+                required = {"일자": col_date, "캠페인": col_camp,
+                            "노출수": col_imp, "클릭수": col_clk, "비용": col_cost}
+                missing = [k for k, v in required.items() if v == "(선택안함)"]
+                if missing:
+                    st.error(f"❌ 필수 항목 미지정: {', '.join(missing)}")
+                else:
+                    df = pd.DataFrame(index=df_raw.index)
+                    df["date"] = pd.to_datetime(df_raw[col_date], errors="coerce").dt.strftime("%Y-%m-%d")
+                    df["campaign"] = df_raw[col_camp].astype(str)
+                    df["adgroup"] = df_raw[col_ag].astype(str) if col_ag != "(선택안함)" else df["campaign"]
+                    df["impressions"] = pd.to_numeric(df_raw[col_imp], errors="coerce").fillna(0).astype(int)
+                    df["clicks"] = pd.to_numeric(df_raw[col_clk], errors="coerce").fillna(0).astype(int)
+                    df["cost"] = pd.to_numeric(df_raw[col_cost], errors="coerce").fillna(0)
+                    if cost_unit.startswith("USD"):
+                        df["cost"] = df["cost"] * 1300
+                    
+                    def make_raw(idx):
+                        d = {}
+                        for c in other_numeric:
+                            v = df_raw.loc[idx, c]
+                            try: d[c] = float(v) if pd.notna(v) else 0
+                            except: d[c] = 0
+                        return json.dumps(d, ensure_ascii=False)
+                    df["raw_data"] = [make_raw(i) for i in df.index]
+                    
+                    df = df.dropna(subset=["date"])
+                    
+                    if df.empty:
+                        st.error("❌ 일자 컬럼이 인식되지 않았습니다. 다른 컬럼을 선택해주세요.")
+                    else:
+                        st.session_state["upload_df"] = df.reset_index(drop=True)
+                        st.session_state["upload_other"] = other_numeric
+                        st.success(f"✅ 변환 완료 — {len(df):,}행")
+            
+            # 미리보기 + 저장 버튼
+            if "upload_df" in st.session_state:
+                df = st.session_state["upload_df"]
+                st.subheader("📊 변환된 데이터 미리보기")
+                st.dataframe(df.head(8), use_container_width=True, hide_index=True)
+                
+                # 검증 KPI
+                kc = st.columns(4)
+                kc[0].metric("총 행수", f"{len(df):,}")
+                kc[1].metric("총 노출", f"{int(df['impressions'].sum()):,}")
+                kc[2].metric("총 클릭", f"{int(df['clicks'].sum()):,}")
+                kc[3].metric("총 비용", f"₩{float(df['cost'].sum()):,.0f}")
+                
+                if st.session_state.get("upload_other"):
+                    st.info(f"💡 감지된 전환 후보 컬럼: **{', '.join(st.session_state['upload_other'])}** "
+                            f"→ '🎯 전환지표 설정' 메뉴에서 어떤 컬럼을 전환으로 사용할지 매핑하세요.")
+                
+                if st.button("💾 DB에 저장", type="primary"):
+                    con = sqlite3.connect(DB); cur = con.cursor()
+                    for _, r in df.iterrows():
+                        cur.execute("""INSERT INTO perf (advertiser_code,platform,date,campaign,adgroup,
+                            impressions,clicks,cost,raw_data) VALUES (?,?,?,?,?,?,?,?,?)""",
+                            (adv_code, platform, r["date"], r["campaign"], r["adgroup"],
+                             int(r["impressions"]), int(r["clicks"]),
+                             float(r["cost"]), r["raw_data"]))
+                    cur.execute("""INSERT INTO upload_log (email,advertiser_code,platform,file_name,rows,uploaded_at)
+                        VALUES (?,?,?,?,?,?)""",
+                        (user["email"], adv_code, platform, file.name, len(df),
+                         datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                    con.commit(); con.close()
+                    st.success(f"🎉 {len(df):,}행 저장 완료!")
+                    for k in ["upload_df", "upload_other", "up_sig"]:
+                        if k in st.session_state: del st.session_state[k]
+                    st.balloons()
+        
         except Exception as e:
-            st.error(f"파싱 오류: {e}")
+            st.error(f"파일 처리 오류: {e}")
             import traceback; st.code(traceback.format_exc())
 
 # ============ 업로드 이력 ============
