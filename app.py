@@ -734,12 +734,21 @@ if page == "📈 대시보드" and adv_code:
     # 동적 탭 구성: 데이터가 있는 매체만 표시
     available = sorted(df_all["platform"].unique(),
                        key=lambda x: {"GOOGLE":0,"FACEBOOK":1}.get(x,99))
+    
+    # 광고주별 소재 표시 옵션 조회
+    cre_row = q("SELECT COALESCE(show_creative,0) FROM advertisers WHERE code=?", (adv_code,))
+    show_creative = bool(cre_row[0][0]) if cre_row else False
+    
     tab_labels = ["📊 Summary"]
     tab_keys = ["summary"]
     if "GOOGLE" in available:
         tab_labels.append("🟦 Google"); tab_keys.append("google")
+        if show_creative:
+            tab_labels.append("🎨 구글_광고소재"); tab_keys.append("google_cre")
     if "FACEBOOK" in available:
         tab_labels.append("🟪 Facebook"); tab_keys.append("facebook")
+        if show_creative:
+            tab_labels.append("🎨 페이스북_광고소재"); tab_keys.append("facebook_cre")
     tabs = st.tabs(tab_labels)
     tabd = dict(zip(tab_keys, tabs))
 
@@ -795,6 +804,11 @@ if page == "📈 대시보드" and adv_code:
                 sub = df_g[df_g["campaign"]==camp]
                 with st.expander(f"📁 {camp}  (광고비 ₩{sub['cost'].sum():,.0f} · 노출 {int(sub['impressions'].sum()):,})"):
                     render_adgroup_table(sub, conv_label, key=f"g_ag_{camp}", show_conversion=show_conv)
+    # Google 광고소재
+    if "google_cre" in tabd:
+        with tabd["google_cre"]:
+            df_g = df_all[df_all["platform"]=="GOOGLE"]
+            render_creative_tab(df_g, "GOOGLE", key_prefix="g_cre", show_conv=show_conv)
 
     # Facebook
     if "facebook" in tabd:
@@ -820,6 +834,12 @@ if page == "📈 대시보드" and adv_code:
                 sub = df_f[df_f["campaign"]==camp]
                 with st.expander(f"📁 {camp}  (광고비 ₩{sub['cost'].sum():,.0f} · 노출 {int(sub['impressions'].sum()):,})"):
                     render_adgroup_table(sub, conv_label, key=f"f_ag_{camp}", show_conversion=show_conv)
+
+# Facebook 광고소재
+    if "facebook_cre" in tabd:
+        with tabd["facebook_cre"]:
+            df_f = df_all[df_all["platform"]=="FACEBOOK"]
+            render_creative_tab(df_f, "FACEBOOK", key_prefix="f_cre", show_conv=show_conv)
                     
 # ============ 데이터 업로드 ============
 elif page == "📤 데이터 업로드" and adv_code:
