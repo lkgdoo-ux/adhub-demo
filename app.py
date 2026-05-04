@@ -413,7 +413,7 @@ def build_pdf_report(adv_code, adv_name, df_all, total_budget, show_conv):
 def chart_daily_metric(df, conv_label, key_prefix=""):
     if df.empty: return
     metric_choice = st.radio(
-        "지표 선택", ["광고비 (₩)","CTR (%)","CPM (₩)","CPC (₩)",f"{conv_label} (₩)"],
+        "지표 선택", ["CTR (%)","CPM (₩)","CPC (₩)",f"{conv_label} (₩)"],
         horizontal=True, key=f"{key_prefix}_metric")
     daily = df.groupby(["date","platform"], as_index=False).agg(
         impressions=("impressions","sum"), clicks=("clicks","sum"),
@@ -422,7 +422,7 @@ def chart_daily_metric(df, conv_label, key_prefix=""):
     daily["CPM"] = daily.apply(lambda r: safe_div(r.cost, r.impressions)*1000, axis=1)
     daily["CPC"] = daily.apply(lambda r: safe_div(r.cost, r.clicks), axis=1)
     daily["CPA"] = daily.apply(lambda r: safe_div(r.cost, r.conversions), axis=1)
-    mmap = {"광고비 (₩)":"cost","CTR (%)":"CTR","CPM (₩)":"CPM","CPC (₩)":"CPC",f"{conv_label} (₩)":"CPA"}
+    mmap = {"CTR (%)":"CTR","CPM (₩)":"CPM","CPC (₩)":"CPC",f"{conv_label} (₩)":"CPA"}
     y_col = mmap[metric_choice]
     fig = px.line(daily, x="date", y=y_col, color="platform", markers=True,
                   title=f"일자별 {metric_choice} 추이",
