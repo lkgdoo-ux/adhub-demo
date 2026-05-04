@@ -61,6 +61,8 @@ def migrate_db():
         cur.execute("UPDATE advertisers SET created_at = datetime('now') WHERE created_at IS NULL")
     if "total_budget" not in cols:
         cur.execute("ALTER TABLE advertisers ADD COLUMN total_budget REAL DEFAULT 0")
+    if "show_conversion" not in cols:
+        cur.execute("ALTER TABLE advertisers ADD COLUMN show_conversion INTEGER DEFAULT 1")
     cols = [r[1] for r in cur.execute("PRAGMA table_info(perf)").fetchall()]
     if "raw_data" not in cols:
         cur.execute("ALTER TABLE perf ADD COLUMN raw_data TEXT")
@@ -242,7 +244,7 @@ def render_budget_donut(spent, total, height=240):
     )
     return fig
 
-def render_kpi(df, total_budget=0):
+def render_kpi(df, total_budget=0, show_conversion=True):
     tot_imp = int(df["impressions"].sum()); tot_clk = int(df["clicks"].sum())
     tot_cost = float(df["cost"].sum()); tot_conv = float(df["conversions"].sum())
     ctr = safe_div(tot_clk, tot_imp)*100; cpm = safe_div(tot_cost, tot_imp)*1000
@@ -253,94 +255,123 @@ def render_kpi(df, total_budget=0):
     if total_budget > 0:
         col_d, col_m = st.columns([1, 2])
         with col_d:
-            st.plotly_chart(render_budget_donut(tot_cost, total_budget),
-                            use_container_width=True,
-                            key=f"budget_donut_{tot_cost}_{total_budget}")
+            st.plotly_chart(
+                render_budget_donut(tot_cost, total_budget),
+                use_container_width=True,
+                key=f"budget_donut_{tot_cost}_{total_budget}"
+            )
         with col_m:
             r1 = st.columns(3)
             r1[0].metric("총 예산", f"₩{total_budget:,.0f}")
             r1[1].metric("소진 광고비", f"₩{tot_cost:,.0f}")
             r1[2].metric("잔여 예산", f"₩{max(total_budget - tot_cost, 0):,.0f}")
-            r2 = st.columns(3)
-            r2[0].metric("노출", f"{tot_imp:,}")
-            r2[1].metric("클릭", f"{tot_clk:,}")
-            r2[2].metric(f"전환 ({conv_label})", f"{tot_conv:,.0f}")
-        r3 = st.columns(4)
-        r3[0].metric("CTR", f"{ctr:.2f}%")
-        r3[1].metric("CPM", f"₩{cpm:,.0f}")
-        r3[2].metric("CPC", f"₩{cpc:,.0f}")
-        r3[3].metric(conv_label, f"₩{cpa:,.0f}" if tot_conv else "—")
+            if show_conversion:
+                r2 = st.columns(3)
+                r2[0].metric("노출", f"{tot_imp:,}")
+                r2[1].metric("클릭", f"{tot_clk:,}")
+                r2[2].metric(f"전환 ({conv_label})", f"{tot_conv:,.0f}")
+            else:
+                r2 = st.columns(2)
+                r2[0].metric("노출", f"{tot_imp:,}")
+                r2[1].metric("클릭", f"{tot_clk:,}")
+        if show_conversion:
+            r3 = st.columns(4)
+            r3[0].metric("CTR", f"{ctr:.2f}%")
+            r3[1].metric("CPM", f"₩{cpm:,.0f}")
+            r3[2].metric("CPC", f"₩{cpc:,.0f}")
+            r3[3].metric(conv_label, f"₩{cpa:,.0f}" if tot_conv else "—")
+        else:
+            r3 = st.columns(3)
+            r3[0].metric("CTR", f"{ctr:.2f}%")
+            r3[1].metric("CPM", f"₩{cpm:,.0f}")
+            r3[2].metric("CPC", f"₩{cpc:,.0f}")
     else:
-        c = st.columns(4)
-        c[0].metric("광고비", f"₩{tot_cost:,.0f}")
-        c[1].metric("노출", f"{tot_imp:,}")
-        c[2].metric("클릭", f"{tot_clk:,}")
-        c[3].metric(f"전환 ({conv_label})", f"{tot_conv:,.0f}")
-        c2 = st.columns(4)
-        c2[0].metric("CTR", f"{ctr:.2f}%")
-        c2[1].metric("CPM", f"₩{cpm:,.0f}")
-        c2[2].metric("CPC", f"₩{cpc:,.0f}")
-        c2[3].metric(conv_label, f"₩{cpa:,.0f}" if tot_conv else "—")
+        if show_conversion:
+            c = st.columns(4)
+            c[0].metric("광고비", f"₩{tot_cost:,.0f}")
+            c[1].metric("노출", f"{tot_imp:,}")
+            c[2].metric("클릭", f"{tot_clk:,}")
+            c[3].metric(f"전환 ({conv_label})", f"{tot_conv:,.0f}")
+            c2 = st.columns(4)
+            c2[0].metric("CTR", f"{ctr:.2f}%")
+            c2[1].metric("CPM", f"₩{cpm:,.0f}")
+            c2[2].metric("CPC", f"₩{cpc:,.0f}")
+            c2[3].metric(conv_label, f"₩{cpa:,.0f}" if tot_conv else "—")
+        else:
+            c = st.columns(3)
+            c[0].metric("광고비", f"₩{tot_cost:,.0f}")
+            c[1].metric("노출", f"{tot_imp:,}")
+            c[2].metric("클릭", f"{tot_clk:,}")
+            c2 = st.columns(3)
+            c2[0].metric("CTR", f"{ctr:.2f}%")
+            c2[1].metric("CPM", f"₩{cpm:,.0f}")
+            c2[2].metric("CPC", f"₩{cpc:,.0f}")
     return conv_label
 
 # ⭐ 신규: 지표 컬럼 추가 헬퍼
-def _add_metric_cols(g, conv_label):
+def _add_metric_cols(g, conv_label, show_conversion=True):
     g = g.copy()
     g["CTR (%)"] = g.apply(lambda r: round(safe_div(r["clicks"],r["impressions"])*100,2), axis=1)
     g["CPM (₩)"] = g.apply(lambda r: round(safe_div(r["cost"],r["impressions"])*1000), axis=1)
     g["CPC (₩)"] = g.apply(lambda r: round(safe_div(r["cost"],r["clicks"])), axis=1)
-    g[f"{conv_label} (₩)"] = g.apply(
-        lambda r: round(safe_div(r["cost"],r["conversions"])) if r["conversions"] else 0, axis=1)
+    if show_conversion:
+        g[f"{conv_label} (₩)"] = g.apply(
+            lambda r: round(safe_div(r["cost"],r["conversions"])) if r["conversions"] else 0, axis=1)
     g["광고비"] = g["cost"].astype(int)
     g["노출"] = g["impressions"]
     g["클릭"] = g["clicks"]
-    g["전환"] = g["conversions"].astype(int)
+    if show_conversion:
+        g["전환"] = g["conversions"].astype(int)
     return g
 
-# ⭐ 신규: 캠페인 성과 표 (집계 단위 토글)
-def render_campaign_table(df, conv_label, key):
+def render_campaign_table(df, conv_label, key, show_conversion=True):
     unit = st.radio("집계 단위", ["캠페인 합계", "일자별"],
                     horizontal=True, key=f"{key}_unit")
+    base_cols = ["노출","클릭","광고비"]
+    metric_cols = ["CTR (%)","CPM (₩)","CPC (₩)"]
+    if show_conversion:
+        base_cols.append("전환")
+        metric_cols.append(f"{conv_label} (₩)")
     if unit == "캠페인 합계":
         g = df.groupby("campaign", as_index=False).agg(
             impressions=("impressions","sum"), clicks=("clicks","sum"),
             cost=("cost","sum"), conversions=("conversions","sum"))
-        g = _add_metric_cols(g, conv_label)
-        show = g[["campaign","노출","클릭","광고비","전환",
-                  "CTR (%)","CPM (₩)","CPC (₩)",f"{conv_label} (₩)"]]
+        g = _add_metric_cols(g, conv_label, show_conversion)
+        show = g[["campaign"] + base_cols + metric_cols]
         show = show.rename(columns={"campaign":"캠페인"}).sort_values("광고비", ascending=False)
     else:
         g = df.groupby(["date","campaign"], as_index=False).agg(
             impressions=("impressions","sum"), clicks=("clicks","sum"),
             cost=("cost","sum"), conversions=("conversions","sum"))
-        g = _add_metric_cols(g, conv_label)
+        g = _add_metric_cols(g, conv_label, show_conversion)
         g["일자"] = pd.to_datetime(g["date"]).dt.strftime("%Y-%m-%d")
-        show = g[["일자","campaign","노출","클릭","광고비","전환",
-                  "CTR (%)","CPM (₩)","CPC (₩)",f"{conv_label} (₩)"]]
+        show = g[["일자","campaign"] + base_cols + metric_cols]
         show = show.rename(columns={"campaign":"캠페인"}).sort_values(
             ["일자","광고비"], ascending=[True, False])
     st.dataframe(show, use_container_width=True, hide_index=True)
 
-# ⭐ 교체: 광고그룹 성과 표 (집계 단위 토글)
-def render_adgroup_table(df, conv_label, key):
+def render_adgroup_table(df, conv_label, key, show_conversion=True):
     unit = st.radio("집계 단위", ["광고그룹 합계", "일자별"],
                     horizontal=True, key=f"{key}_unit")
+    base_cols = ["노출","클릭","광고비"]
+    metric_cols = ["CTR (%)","CPM (₩)","CPC (₩)"]
+    if show_conversion:
+        base_cols.append("전환")
+        metric_cols.append(f"{conv_label} (₩)")
     if unit == "광고그룹 합계":
         g = df.groupby("adgroup", as_index=False).agg(
             impressions=("impressions","sum"), clicks=("clicks","sum"),
             cost=("cost","sum"), conversions=("conversions","sum"))
-        g = _add_metric_cols(g, conv_label)
-        show = g[["adgroup","노출","클릭","광고비","전환",
-                  "CTR (%)","CPM (₩)","CPC (₩)",f"{conv_label} (₩)"]]
+        g = _add_metric_cols(g, conv_label, show_conversion)
+        show = g[["adgroup"] + base_cols + metric_cols]
         show = show.rename(columns={"adgroup":"광고그룹"}).sort_values("광고비", ascending=False)
     else:
         g = df.groupby(["date","adgroup"], as_index=False).agg(
             impressions=("impressions","sum"), clicks=("clicks","sum"),
             cost=("cost","sum"), conversions=("conversions","sum"))
-        g = _add_metric_cols(g, conv_label)
+        g = _add_metric_cols(g, conv_label, show_conversion)
         g["일자"] = pd.to_datetime(g["date"]).dt.strftime("%Y-%m-%d")
-        show = g[["일자","adgroup","노출","클릭","광고비","전환",
-                  "CTR (%)","CPM (₩)","CPC (₩)",f"{conv_label} (₩)"]]
+        show = g[["일자","adgroup"] + base_cols + metric_cols]
         show = show.rename(columns={"adgroup":"광고그룹"}).sort_values(
             ["일자","광고비"], ascending=[True, False])
     st.dataframe(show, use_container_width=True, hide_index=True)
@@ -353,35 +384,47 @@ if page == "📈 대시보드" and adv_code:
         st.warning("데이터가 없습니다. '데이터 업로드' 메뉴에서 파일을 올려주세요."); st.stop()
     raw["date"] = pd.to_datetime(raw["date"])
     min_d, max_d = raw["date"].min().date(), raw["date"].max().date()
-    
-    bud_row = q("SELECT total_budget FROM advertisers WHERE code=?", (adv_code,))
-    total_budget = float(bud_row[0][0] or 0) if bud_row else 0
-    
+
+    adv_row = q("SELECT total_budget, COALESCE(show_conversion,1) FROM advertisers WHERE code=?", (adv_code,))
+    if adv_row:
+        total_budget = float(adv_row[0][0] or 0)
+        show_conv = bool(adv_row[0][1])
+    else:
+        total_budget = 0; show_conv = True
+
     fc1, _ = st.columns([3,2])
     with fc1:
         date_range = st.date_input("📅 기간 선택", value=(min_d, max_d),
                                    min_value=min_d, max_value=max_d)
-    
+
     df_all = raw.copy()
     if isinstance(date_range, tuple) and len(date_range)==2:
         d_from, d_to = date_range
         df_all = df_all[(df_all["date"]>=pd.Timestamp(d_from)) & (df_all["date"]<=pd.Timestamp(d_to))]
-    
+
     mapping = get_conversion_mapping(adv_code)
     df_all = compute_metrics(df_all, mapping)
-    
-    tab_sum, tab_g, tab_f = st.tabs(["📊 Summary", "🟦 Google", "🟪 Facebook"])
-    
+
+    # 동적 탭 구성: 데이터가 있는 매체만 표시
+    available = sorted(df_all["platform"].unique(),
+                       key=lambda x: {"GOOGLE":0,"FACEBOOK":1}.get(x,99))
+    tab_labels = ["📊 Summary"]
+    tab_keys = ["summary"]
+    if "GOOGLE" in available:
+        tab_labels.append("🟦 Google"); tab_keys.append("google")
+    if "FACEBOOK" in available:
+        tab_labels.append("🟪 Facebook"); tab_keys.append("facebook")
+    tabs = st.tabs(tab_labels)
+    tabd = dict(zip(tab_keys, tabs))
+
     # Summary
-    with tab_sum:
+    with tabd["summary"]:
         st.markdown("##### 매체 선택")
-        # GOOGLE을 항상 왼쪽에 오도록 정렬
         priority = {"GOOGLE": 0, "FACEBOOK": 1, "NAVER": 2, "KAKAO": 3, "TIKTOK": 4}
-        all_pfs = sorted(df_all["platform"].unique(), key=lambda x: priority.get(x, 99))
+        all_pfs = sorted(available, key=lambda x: priority.get(x, 99))
         if not all_pfs:
             st.info("데이터 없음")
         else:
-            # 좁은 영역에만 체크박스 배치 (전체 너비의 약 35%)
             cb_cols = st.columns([1, 1, 1, 1, 6])
             sel_pfs = []
             for i, p in enumerate(all_pfs):
@@ -391,7 +434,7 @@ if page == "📈 대시보드" and adv_code:
             if df_s.empty:
                 st.warning("선택한 매체에 데이터가 없습니다.")
             else:
-                conv_label = render_kpi(df_s, total_budget)
+                conv_label = render_kpi(df_s, total_budget, show_conv)
                 st.divider()
                 chart_daily_metric(df_s, conv_label, key_prefix="sum")
                 st.divider()
@@ -399,34 +442,14 @@ if page == "📈 대시보드" and adv_code:
                 with cc1: chart_cost_donut(df_s, "매체별 광고비 비중")
                 with cc2: chart_campaign_bar(df_s, "cost", "캠페인별 광고비 TOP 10")
                 st.divider()
-                # ⭐ Summary 캠페인별 효율 표 추가
                 st.subheader("📋 캠페인별 효율")
-                by_camp = df_s.groupby(["platform","campaign"], as_index=False).agg(
-                    impressions=("impressions","sum"),
-                    clicks=("clicks","sum"),
-                    cost=("cost","sum"),
-                    conversions=("conversions","sum"))
-                by_camp["CTR (%)"] = by_camp.apply(lambda r: round(safe_div(r.clicks,r.impressions)*100,2), axis=1)
-                by_camp["CPM (₩)"] = by_camp.apply(lambda r: round(safe_div(r.cost,r.impressions)*1000), axis=1)
-                by_camp["CPC (₩)"] = by_camp.apply(lambda r: round(safe_div(r.cost,r.clicks)), axis=1)
-                by_camp[f"{conv_label} (₩)"] = by_camp.apply(
-                    lambda r: round(safe_div(r.cost,r.conversions)) if r.conversions else 0, axis=1)
-                by_camp["광고비"] = by_camp["cost"].astype(int)
-                by_camp["노출"] = by_camp["impressions"]
-                by_camp["클릭"] = by_camp["clicks"]
-                by_camp["전환"] = by_camp["conversions"].astype(int)
-                show_camp = by_camp[["platform","campaign","노출","클릭","광고비","전환",
-                                     "CTR (%)","CPM (₩)","CPC (₩)",f"{conv_label} (₩)"]]
-                show_camp = show_camp.rename(columns={"platform":"매체","campaign":"캠페인"})
-                show_camp = show_camp.sort_values("광고비", ascending=False)
-                st.dataframe(show_camp, use_container_width=True, hide_index=True)
-  # Google
-    with tab_g:
-        df_g = df_all[df_all["platform"]=="GOOGLE"]
-        if df_g.empty:
-            st.info("Google 데이터가 없습니다.")
-        else:
-            conv_label = render_kpi(df_g, 0)
+                render_campaign_table(df_s, conv_label, key="sum_camp", show_conversion=show_conv)
+
+    # Google
+    if "google" in tabd:
+        with tabd["google"]:
+            df_g = df_all[df_all["platform"]=="GOOGLE"]
+            conv_label = render_kpi(df_g, total_budget, show_conv)
             st.divider()
             cc1, cc2 = st.columns([2,1])
             with cc1: chart_daily_metric(df_g, conv_label, key_prefix="g")
@@ -435,24 +458,23 @@ if page == "📈 대시보드" and adv_code:
                 fig = px.pie(by_c, names="campaign", values="cost", hole=0.4,
                              title="캠페인별 광고비 비중",
                              color_discrete_sequence=px.colors.sequential.Blues_r)
-                fig.update_layout(height=380); st.plotly_chart(fig, use_container_width=True, key="g_camp_pie")
+                fig.update_layout(height=380)
+                st.plotly_chart(fig, use_container_width=True, key="g_camp_pie")
             st.divider()
             st.subheader("📋 캠페인별 성과")
-            render_campaign_table(df_g, conv_label, key="g_camp")
+            render_campaign_table(df_g, conv_label, key="g_camp", show_conversion=show_conv)
             st.divider()
             st.subheader("📁 캠페인별 광고그룹 성과")
             for camp in sorted(df_g["campaign"].unique()):
                 sub = df_g[df_g["campaign"]==camp]
                 with st.expander(f"📁 {camp}  (광고비 ₩{sub['cost'].sum():,.0f} · 노출 {int(sub['impressions'].sum()):,})"):
-                    render_adgroup_table(sub, conv_label, key=f"g_ag_{camp}")
-    
-     # Facebook
-    with tab_f:
-        df_f = df_all[df_all["platform"]=="FACEBOOK"]
-        if df_f.empty:
-            st.info("Facebook 데이터가 없습니다.")
-        else:
-            conv_label = render_kpi(df_f, 0)
+                    render_adgroup_table(sub, conv_label, key=f"g_ag_{camp}", show_conversion=show_conv)
+
+    # Facebook
+    if "facebook" in tabd:
+        with tabd["facebook"]:
+            df_f = df_all[df_all["platform"]=="FACEBOOK"]
+            conv_label = render_kpi(df_f, total_budget, show_conv)
             st.divider()
             cc1, cc2 = st.columns([2,1])
             with cc1: chart_daily_metric(df_f, conv_label, key_prefix="f")
@@ -461,17 +483,18 @@ if page == "📈 대시보드" and adv_code:
                 fig = px.pie(by_c, names="campaign", values="cost", hole=0.4,
                              title="캠페인별 광고비 비중",
                              color_discrete_sequence=px.colors.sequential.Purples_r)
-                fig.update_layout(height=380); st.plotly_chart(fig, use_container_width=True, key="g_camp_pie")
+                fig.update_layout(height=380)
+                st.plotly_chart(fig, use_container_width=True, key="f_camp_pie")
             st.divider()
             st.subheader("📋 캠페인별 성과")
-            render_campaign_table(df_f, conv_label, key="f_camp")
+            render_campaign_table(df_f, conv_label, key="f_camp", show_conversion=show_conv)
             st.divider()
             st.subheader("📁 캠페인별 광고그룹 성과")
             for camp in sorted(df_f["campaign"].unique()):
                 sub = df_f[df_f["campaign"]==camp]
                 with st.expander(f"📁 {camp}  (광고비 ₩{sub['cost'].sum():,.0f} · 노출 {int(sub['impressions'].sum()):,})"):
-                    render_adgroup_table(sub, conv_label, key=f"f_ag_{camp}")
-
+                    render_adgroup_table(sub, conv_label, key=f"f_ag_{camp}", show_conversion=show_conv)
+                    
 # ============ 데이터 업로드 ============
 elif page == "📤 데이터 업로드" and adv_code:
     st.title("📤 로우데이터 업로드")
@@ -571,34 +594,40 @@ elif page == "🎯 전환지표 설정" and adv_code:
 elif page == "🏢 광고주 관리":
     st.title("🏢 광고주 관리")
     if not is_admin: st.error("관리자 권한 필요"); st.stop()
-    advs = pd.read_sql("""SELECT code AS 코드, name AS 이름, 
-                          COALESCE(total_budget,0) AS 총예산, created_at AS 생성일 
+    advs = pd.read_sql("""SELECT code AS 코드, name AS 이름,
+                          COALESCE(total_budget,0) AS 총예산,
+                          COALESCE(show_conversion,1) AS 전환표시,
+                          created_at AS 생성일
                           FROM advertisers ORDER BY created_at DESC""", sqlite3.connect(DB))
     st.subheader(f"등록된 광고주 ({len(advs)}개)")
     advs_show = advs.copy()
     advs_show["총예산"] = advs_show["총예산"].apply(lambda x: f"₩{x:,.0f}")
+    advs_show["전환표시"] = advs_show["전환표시"].apply(lambda x: "✅ 표시" if x else "❌ 숨김")
     st.dataframe(advs_show, use_container_width=True, hide_index=True)
     st.divider()
-    
+
     st.subheader("➕ 광고주 추가")
     with st.form("add_adv"):
         c1, c2, c3 = st.columns(3)
         with c1: new_code = st.text_input("코드 (예: GAME_C)")
         with c2: new_name = st.text_input("이름")
         with c3: new_budget = st.number_input("총 예산 (₩)", min_value=0, step=100000, value=0)
+        new_show_conv = st.checkbox("전환지표(CPI/CPA 등) 표시", value=True,
+            help="끄면 대시보드에서 전환·CPA·CPI 컬럼이 모두 숨겨집니다.")
         if st.form_submit_button("추가", type="primary"):
             if not new_code or not new_name: st.error("코드와 이름을 입력하세요")
             else:
                 try:
-                    q("INSERT INTO advertisers (code,name,total_budget) VALUES (?,?,?)",
-                      (new_code.strip().upper(), new_name.strip(), float(new_budget)), fetch=False)
+                    q("INSERT INTO advertisers (code,name,total_budget,show_conversion) VALUES (?,?,?,?)",
+                      (new_code.strip().upper(), new_name.strip(), float(new_budget),
+                       1 if new_show_conv else 0), fetch=False)
                     q("INSERT OR IGNORE INTO permissions VALUES (?,?,?)",
                       (user["email"], new_code.strip().upper(), "OWNER"), fetch=False)
                     st.success(f"'{new_name}' 추가 완료"); st.rerun()
                 except sqlite3.IntegrityError: st.error("이미 존재하는 코드입니다")
     st.divider()
-    
-    st.subheader("✏️ 이름 / 예산 편집")
+
+    st.subheader("✏️ 이름 / 예산 / 전환지표 표시 편집")
     if not advs.empty:
         edit_code = st.selectbox("편집할 광고주", advs["코드"].tolist(),
             format_func=lambda c: f"{c} — {advs[advs['코드']==c]['이름'].iloc[0]}")
@@ -607,12 +636,15 @@ elif page == "🏢 광고주 관리":
         with c1: new_name2 = st.text_input("이름", value=cur_row["이름"], key="edit_name")
         with c2: new_budget2 = st.number_input("총 예산 (₩)", min_value=0, step=100000,
                                                 value=int(cur_row["총예산"]), key="edit_bud")
+        new_show2 = st.checkbox("전환지표(CPI/CPA 등) 표시",
+            value=bool(cur_row["전환표시"]), key="edit_show",
+            help="끄면 대시보드에서 전환·CPA·CPI 컬럼이 모두 숨겨집니다.")
         if st.button("변경 저장"):
-            q("UPDATE advertisers SET name=?, total_budget=? WHERE code=?",
-              (new_name2, float(new_budget2), edit_code), fetch=False)
+            q("UPDATE advertisers SET name=?, total_budget=?, show_conversion=? WHERE code=?",
+              (new_name2, float(new_budget2), 1 if new_show2 else 0, edit_code), fetch=False)
             st.success("변경됨"); st.rerun()
     st.divider()
-    
+
     st.subheader("🗑️ 광고주 삭제 (주의: 데이터·권한·매핑 모두 삭제)")
     if not advs.empty:
         del_code = st.selectbox("삭제할 광고주", advs["코드"].tolist(), key="del_sel",
