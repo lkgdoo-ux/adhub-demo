@@ -1724,7 +1724,6 @@ elif page == "🏢 광고주 관리":
                 fetch=False
             )
 
-            # 🔥 여기 추가된 핵심 기능
             email, pw = create_viewer_account(adv_code_clean, new_name)
 
             st.success(
