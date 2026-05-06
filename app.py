@@ -78,8 +78,16 @@ user = st.session_state.user
 is_admin = user["role"] in ("AGENCY_ADMIN", "SUPER_ADMIN")
 
 # ============ 사이드바 ============
-my_advs = q("""SELECT a.code, a.name, p.level FROM permissions p
-    JOIN advertisers a ON a.code=p.advertiser_code WHERE p.email=%s ORDER BY a.name""", (user["email"],))
+if user["role"] == "OWNER":
+    my_advs = [(r[0], r[1], "OWNER") for r in q("SELECT code, name FROM advertisers ORDER BY name")]
+else:
+    my_advs = q("""
+    SELECT a.code, a.name, p.level 
+    FROM permissions p
+    JOIN advertisers a ON a.code=p.advertiser_code 
+    WHERE p.email=%s 
+    ORDER BY a.name
+    """, (user["email"],))
 
 with st.sidebar:
     st.markdown(f"**👤 {user['name']}**  \n`{user['role']}`")
