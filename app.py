@@ -10,6 +10,27 @@ st.set_page_config(page_title="AdHub", page_icon="📊", layout="wide")
 
 DB_URL = st.secrets["DB_URL"]
 
+def q(sql, params=(), fetch=True):
+    conn = psycopg2.connect(DB_URL)
+    cur = conn.cursor()
+    cur.execute(sql, params)
+    rows = cur.fetchall() if fetch else None
+    conn.commit()
+    cur.close()
+    conn.close()
+    return rows
+
+
+def qdf(sql, params=()):
+    conn = psycopg2.connect(DB_URL)
+    cur = conn.cursor()
+    cur.execute(sql, params)
+    rows = cur.fetchall()
+    colnames = [desc[0] for desc in cur.description]
+    cur.close()
+    conn.close()
+    return pd.DataFrame(rows, columns=colnames)
+
 # ============ DB ============
 def init_db():
     conn=psycopg2.connect(DB_URL); cur=conn.cursor()
@@ -796,7 +817,9 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True):
 # ============ 대시보드 ============
 if page == "📈 대시보드" and adv_code:
     st.title(f"📈 {sel_name} — 성과 대시보드")
-    raw = pd.read_sql("SELECT * FROM perf WHERE advertiser_code=%s", psycopg2.connect(DB_URL), params=(adv_code,))
+    rows = q("SELECT * FROM perf WHERE advertiser_code=%s", (adv_code,))
+    cols = ["id","advertiser_code","platform","date","campaign","adgroup","impressions","clicks","cost","raw_data"]
+    raw = pd.DataFrame(rows, columns=cols)
     if raw.empty:
         st.warning("데이터가 없습니다. '데이터 업로드' 메뉴에서 파일을 올려주세요."); st.stop()
     raw["date"] = pd.to_datetime(raw["date"])
@@ -1696,14 +1719,16 @@ elif page == "👤 계정 관리":
         st.error("관리자만 접근 가능합니다"); st.stop()
 
     # ===== 계정 목록 =====
-    users_df = pd.read_sql("""
+    rows = q("""
     SELECT u.email,u.name,u.role,
-           GROUP_CONCAT(p.advertiser_code) AS advertisers
+       STRING_AGG(p.advertiser_code, ',') AS advertisers
     FROM users u
     LEFT JOIN permissions p ON u.email=p.email
-    GROUP BY u.email
+    GROUP BY u.email,u.name,u.role
     ORDER BY u.email
-    """, psycopg2.connect(DB_URL))
+    """)
+
+    users_df = pd.DataFrame(rows, columns=["email","name","role","advertisers"])
 
     st.subheader("📋 계정 목록")
     st.dataframe(users_df, use_container_width=True, hide_index=True)
