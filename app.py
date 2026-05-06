@@ -824,35 +824,21 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True):
         st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_daily_chart")
 
 # ============ 대시보드 ============
-if page == "📈 대시보드" and adv_code:
+if page=="📈 대시보드" and adv_code:
     st.title(f"📈 {sel_name} — 성과 대시보드")
-    rows = q("SELECT * FROM perf WHERE advertiser_code=%s", (adv_code,))
-    cols = ["id","advertiser_code","platform","date","campaign","adgroup","impressions","clicks","cost","raw_data"]
-    raw = pd.DataFrame(rows)
-    if raw.empty:
-        st.warning("데이터가 없습니다. '데이터 업로드' 메뉴에서 파일을 올려주세요."); st.stop()
-    raw["date"] = pd.to_datetime(raw["date"])
-    min_d, max_d = raw["date"].min().date(), raw["date"].max().date()
-
-    adv_row = q("SELECT total_budget, COALESCE(show_conversion,1) FROM advertisers WHERE code=%s", (adv_code,))
-    if adv_row:
-        total_budget = float(adv_row[0][0] or 0)
-        show_conv = bool(adv_row[0][1])
-    else:
-        total_budget = 0; show_conv = True
-
-    fc1, _ = st.columns([3,2])
-    with fc1:
-        date_range = st.date_input("📅 기간 선택", value=(min_d, max_d),
-                                   min_value=min_d, max_value=max_d)
-
-    df_all = raw.copy()
-    if isinstance(date_range, tuple) and len(date_range)==2:
-        d_from, d_to = date_range
-        df_all = df_all[(df_all["date"]>=pd.Timestamp(d_from)) & (df_all["date"]<=pd.Timestamp(d_to))]
-
-    mapping = get_conversion_mapping(adv_code)
-    df_all = compute_metrics(df_all, mapping)
+    rows=q("SELECT * FROM perf WHERE advertiser_code=%s",(adv_code,))
+    cols=["id","advertiser_code","platform","date","campaign","adgroup","impressions","clicks","cost","raw_data"]
+    raw=pd.DataFrame([r[:len(cols)] for r in rows],columns=cols)
+    if raw.empty: st.warning("데이터가 없습니다. '데이터 업로드' 메뉴에서 파일을 올려주세요."); st.stop()
+    raw["date"]=pd.to_datetime(raw["date"],errors="coerce"); raw=raw.dropna(subset=["date"])
+    min_d,max_d=raw["date"].min().date(),raw["date"].max().date()
+    adv_row=q("SELECT total_budget, COALESCE(show_conversion,1) FROM advertisers WHERE code=%s",(adv_code,))
+    total_budget=float(adv_row[0][0] or 0) if adv_row else 0; show_conv=bool(adv_row[0][1]) if adv_row else True
+    fc1,_=st.columns([3,2])
+    with fc1: date_range=st.date_input("📅 기간 선택",value=(min_d,max_d),min_value=min_d,max_value=max_d)
+    df_all=raw.copy()
+    if isinstance(date_range,tuple) and len(date_range)==2: d_from,d_to=date_range; df_all=df_all[(df_all["date"]>=pd.Timestamp(d_from))&(df_all["date"]<=pd.Timestamp(d_to))]
+    mapping=get_conversion_mapping(adv_code); df_all=compute_metrics(df_all,mapping)
 
     # 동적 탭 구성: 데이터가 있는 매체만 표시
     available = sorted(df_all["platform"].unique(),
