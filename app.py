@@ -10,6 +10,8 @@ st.set_page_config(page_title="AdHub", page_icon="📊", layout="wide")
 
 DB_URL = st.secrets["DB_URL"]
 
+# 🔥 DB 조회 캐싱 (핵심)
+@st.cache_data(ttl=60)
 def q(sql, params=(), fetch=True):
     conn = psycopg2.connect(DB_URL)
     cur = conn.cursor()
@@ -20,7 +22,8 @@ def q(sql, params=(), fetch=True):
     conn.close()
     return rows
 
-
+# 🔥 DataFrame 조회 캐싱
+@st.cache_data(ttl=60)
 def qdf(sql, params=()):
     conn = psycopg2.connect(DB_URL)
     cur = conn.cursor()
