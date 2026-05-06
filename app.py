@@ -686,14 +686,17 @@ def render_funnel_table(df, funnel_steps, group_by="overall", key=""):
 # ============ 광고 소재 탭 ============
 def render_creative_tab(df_pf, platform, key_prefix, show_conv=True):
     """광고 소재별 성과 분석 화면"""
-    df_cre = df_pf[df_pf["creative"].notna() & (df_pf["creative"] != "") & (df_pf["creative"] != "None")]
-    if df_cre.empty:
-        st.info(f"💡 {platform} 매체에 광고 소재 데이터가 없습니다.\n\n"
-                f"데이터 업로드 시 '🎨 광고 소재 컬럼'을 매핑한 뒤 다시 시도해주세요.")
+    if "creative" not in df_pf.columns:
+        st.info(f"💡 {platform} 매체에 광고 소재 데이터가 없습니다.\n\n데이터 업로드 시 '🎨 광고 소재 컬럼'을 매핑한 뒤 다시 시도해주세요.")
         return
-    
-    st.caption("🎨 광고 이미지·영상·텍스트별 성과를 분석합니다. "
-               "기본은 전체 데이터 기준이며, 필요 시 캠페인/광고그룹으로 필터링하세요.")
+
+    df_cre = df_pf[df_pf["creative"].notna() & (df_pf["creative"] != "") & (df_pf["creative"] != "None")]
+
+    if df_cre.empty:
+        st.info(f"💡 {platform} 매체에 광고 소재 데이터가 없습니다.\n\n데이터 업로드 시 '🎨 광고 소재 컬럼'을 매핑한 뒤 다시 시도해주세요.")
+        return
+
+    st.caption("🎨 광고 이미지·영상·텍스트별 성과를 분석합니다. 기본은 전체 데이터 기준이며, 필요 시 캠페인/광고그룹으로 필터링하세요.")
     
     # ===== 필터 영역 =====
     with st.container():
