@@ -1,122 +1,44 @@
 # app.py — AdHub v3
 import streamlit as st
 import pandas as pd
-import sqlite3, json
+import psycopg2, json
 from datetime import datetime
 import plotly.express as px
 import plotly.graph_objects as go
 
 st.set_page_config(page_title="AdHub", page_icon="📊", layout="wide")
-DB = "adhub.db"
+
+DB_URL = st.secrets["DB_URL"]
 
 # ============ DB ============
 def init_db():
-    con = sqlite3.connect(DB); cur = con.cursor()
-    cur.executescript("""
-    CREATE TABLE IF NOT EXISTS users (email TEXT PRIMARY KEY, name TEXT, role TEXT, password TEXT);
-    CREATE TABLE IF NOT EXISTS advertisers (
-        code TEXT PRIMARY KEY, name TEXT,
-        total_budget REAL DEFAULT 0,
-        created_at TEXT DEFAULT (datetime('now')));
-    CREATE TABLE IF NOT EXISTS permissions (
-        email TEXT, advertiser_code TEXT, level TEXT,
-        PRIMARY KEY (email, advertiser_code));
-    CREATE TABLE IF NOT EXISTS perf (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        advertiser_code TEXT, platform TEXT, date TEXT,
-        campaign TEXT, adgroup TEXT,
-        impressions INTEGER, clicks INTEGER, cost REAL, raw_data TEXT);
-    CREATE TABLE IF NOT EXISTS upload_log (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        email TEXT, advertiser_code TEXT, platform TEXT,
-        file_name TEXT, rows INTEGER, uploaded_at TEXT);
-    CREATE TABLE IF NOT EXISTS conversion_mapping (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        advertiser_code TEXT, platform TEXT, campaign TEXT,
-        conversion_column TEXT, conversion_label TEXT, updated_at TEXT,
-        UNIQUE(advertiser_code, platform, campaign));
-    """)
-    cur.executemany("INSERT OR IGNORE INTO users VALUES (?,?,?,?)", [
-        ("admin@adhub.com",  "김에이전시", "AGENCY_ADMIN", "1234"),
-        ("manager@scon.com", "박마케터",   "MANAGER",      "1234"),
-        ("viewer@scon.com",  "최뷰어",     "VIEWER",       "1234"),
-    ])
-    cur.executemany("INSERT OR IGNORE INTO advertisers (code,name) VALUES (?,?)", [
-        ("SCONEC", "스코넥엔터테인먼트"), ("GAME_A", "게임사 A"), ("GAME_B", "게임사 B"),
-    ])
-    cur.executemany("INSERT OR IGNORE INTO permissions VALUES (?,?,?)", [
-        ("admin@adhub.com",  "SCONEC", "OWNER"),
-        ("admin@adhub.com",  "GAME_A", "OWNER"),
-        ("admin@adhub.com",  "GAME_B", "OWNER"),
-        ("manager@scon.com", "SCONEC", "EDITOR"),
-        ("viewer@scon.com",  "SCONEC", "VIEWER"),
-    ])
-    con.commit(); con.close()
+    conn=psycopg2.connect(DB_URL); cur=conn.cursor()
+    cur.execute("CREATE TABLE IF NOT EXISTS users (email TEXT PRIMARY KEY,name TEXT,role TEXT,password TEXT);")
+    cur.execute("CREATE TABLE IF NOT EXISTS advertisers (code TEXT PRIMARY KEY,name TEXT,total_budget FLOAT DEFAULT 0,created_at TIMESTAMP DEFAULT NOW());")
+    cur.execute("CREATE TABLE IF NOT EXISTS permissions (email TEXT,advertiser_code TEXT,level TEXT,PRIMARY KEY (email,advertiser_code));")
+    cur.execute("CREATE TABLE IF NOT EXISTS perf (id SERIAL PRIMARY KEY,advertiser_code TEXT,platform TEXT,date TEXT,campaign TEXT,adgroup TEXT,impressions INT,clicks INT,cost FLOAT,raw_data TEXT);")
+    cur.execute("CREATE TABLE IF NOT EXISTS upload_log (id SERIAL PRIMARY KEY,email TEXT,advertiser_code TEXT,platform TEXT,file_name TEXT,rows INT,uploaded_at TIMESTAMP DEFAULT NOW());")
+    cur.execute("CREATE TABLE IF NOT EXISTS conversion_mapping (id SERIAL PRIMARY KEY,advertiser_code TEXT,platform TEXT,campaign TEXT,conversion_column TEXT,conversion_label TEXT,updated_at TIMESTAMP DEFAULT NOW(),UNIQUE(advertiser_code,platform,campaign));")
+    conn.commit(); cur.close(); conn.close()
 
-def migrate_db():
-    con = sqlite3.connect(DB); cur = con.cursor()
-    cols = [r[1] for r in cur.execute("PRAGMA table_info(advertisers)").fetchall()]
-    if "created_at" not in cols:
-        cur.execute("ALTER TABLE advertisers ADD COLUMN created_at TEXT")
-        cur.execute("UPDATE advertisers SET created_at = datetime('now') WHERE created_at IS NULL")
-    if "total_budget" not in cols:
-        cur.execute("ALTER TABLE advertisers ADD COLUMN total_budget REAL DEFAULT 0")
-    if "show_conversion" not in cols:
-        cur.execute("ALTER TABLE advertisers ADD COLUMN show_conversion INTEGER DEFAULT 1")
-    if "show_creative" not in cols:
-        cur.execute("ALTER TABLE advertisers ADD COLUMN show_creative INTEGER DEFAULT 0")
-    cols = [r[1] for r in cur.execute("PRAGMA table_info(perf)").fetchall()]
-    if "raw_data" not in cols:
-        cur.execute("ALTER TABLE perf ADD COLUMN raw_data TEXT")
-    if "upload_log_id" not in cols:
-        cur.execute("ALTER TABLE perf ADD COLUMN upload_log_id INTEGER")
-    if "creative" not in cols:
-        cur.execute("ALTER TABLE perf ADD COLUMN creative TEXT")
-    cols = [r[1] for r in cur.execute("PRAGMA table_info(upload_log)").fetchall()]
-    if "upload_mode" not in cols:
-        cur.execute("ALTER TABLE upload_log ADD COLUMN upload_mode TEXT")
-    if "deleted_rows" not in cols:
-        cur.execute("ALTER TABLE upload_log ADD COLUMN deleted_rows INTEGER DEFAULT 0")
-        cur.execute("""CREATE TABLE IF NOT EXISTS funnel_mapping (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        advertiser_code TEXT NOT NULL,
-        platform TEXT NOT NULL,
-        step_order INTEGER NOT NULL,
-        column_name TEXT NOT NULL,
-        label TEXT NOT NULL,
-        cvr_base TEXT DEFAULT 'clicks'
-    )""")
-    con.commit(); con.close()
+def migrate_db(): pass
 
 init_db(); migrate_db()
 
-def q(sql, params=(), fetch=True):
-    con = sqlite3.connect(DB); cur = con.cursor(); cur.execute(sql, params)
-    rows = cur.fetchall() if fetch else None
-    con.commit(); con.close(); return rows
+def q(sql,params=(),fetch=True):
+    conn=psycopg2.connect(DB_URL); cur=conn.cursor(); cur.execute(sql,params)
+    rows=cur.fetchall() if fetch else None
+    conn.commit(); cur.close(); conn.close(); return rows
 
-def safe_div(a, b): return (a/b) if b else 0
+def safe_div(a,b): return (a/b) if b else 0
 
 import secrets
 
-def create_viewer_account(adv_code, adv_name):
-    email = f"viewer_{adv_code.lower()}@adhub.com"
-    temp_pw = secrets.token_urlsafe(6)
-
-    q(
-        "INSERT OR IGNORE INTO users VALUES (?,?,?,?)",
-        (email, f"{adv_name}_뷰어", "VIEWER", temp_pw),
-        fetch=False
-    )
-
-    q(
-        "INSERT OR IGNORE INTO permissions VALUES (?,?,?)",
-        (email, adv_code, "VIEWER"),
-        fetch=False
-    )
-
-    return email, temp_pw
-
+def create_viewer_account(adv_code,adv_name):
+    email=f"viewer_{adv_code.lower()}@adhub.com"; temp_pw=secrets.token_urlsafe(6)
+    q("INSERT INTO users (email,name,role,password) VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING",(email,f"{adv_name}_뷰어","VIEWER",temp_pw),fetch=False)
+    q("INSERT INTO permissions (email,advertiser_code,level) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING",(email,adv_code,"VIEWER"),fetch=False)
+    return email,temp_pw
 # ============ 로그인 ============
 def login_view():
     st.title("📊 AdHub 로그인")
