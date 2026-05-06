@@ -1663,16 +1663,16 @@ elif page == "🏢 광고주 관리":
                 help="켜면 '구글_광고소재', '페이스북_광고소재' 탭이 활성화됩니다. 소재 컬럼이 포함된 데이터를 업로드해야 합니다.")
         if st.form_submit_button("추가",type="primary"):
             if not new_code or not new_name: st.error("코드와 이름을 입력하세요")
-                else:
-                    try:
-                        adv_code_clean=new_code.strip().upper()
-                        q("INSERT INTO advertisers (code,name,total_budget,show_conversion,show_creative) VALUES (%s,%s,%s,%s,%s)",(adv_code_clean,new_name.strip(),float(new_budget),1 if new_show_conv else 0,1 if new_show_cre else 0),fetch=False)
-                        q("INSERT INTO permissions (email,advertiser_code,level) VALUES (%s,%s,%s) ON CONFLICT (email,advertiser_code) DO NOTHING",(user["email"],adv_code_clean,"OWNER"),fetch=False)
-                        email,pw=create_viewer_account(adv_code_clean,new_name)
-                        st.success(f"{new_name} 추가 완료\n뷰어 계정: {email}\n비밀번호: {pw}")
-                        st.rerun()
-                    except psycopg2.IntegrityError:
-                        st.error("이미 존재하는 코드입니다")
+            else:
+                try:
+                    adv_code_clean=new_code.strip().upper()
+                    q("INSERT INTO advertisers (code,name,total_budget,show_conversion,show_creative) VALUES (%s,%s,%s,%s,%s)",(adv_code_clean,new_name.strip(),float(new_budget),1 if new_show_conv else 0,1 if new_show_cre else 0),fetch=False)
+                    q("INSERT INTO permissions (email,advertiser_code,level) VALUES (%s,%s,%s) ON CONFLICT (email,advertiser_code) DO NOTHING",(user["email"],adv_code_clean,"OWNER"),fetch=False)
+                    email,pw=create_viewer_account(adv_code_clean,new_name)
+                    st.success(f"{new_name} 추가 완료\n뷰어 계정: {email}\n비밀번호: {pw}")
+                    st.rerun()
+                except psycopg2.IntegrityError:
+                    st.error("이미 존재하는 코드입니다")
     st.divider()
 
     st.subheader("✏️ 이름 / 예산 / 표시 옵션 편집")
