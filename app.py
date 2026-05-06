@@ -1198,23 +1198,16 @@ elif page == "📤 데이터 업로드" and adv_code:
                             f"→ '🎯 전환지표 설정' 메뉴에서 매핑하세요.")
                 
                 # 모드별 영향도 미리 계산해서 보여주기
-                con = psycopg2.connect(DB_URL); cur = con.cursor()
                 if mode.startswith("②"):
-                    dates_in_file = list(df["date"].unique())
-                    placeholders = ",".join(["%s"] * len(dates_in_file))
-                    will_delete = cur.execute(
-                        f"SELECT COUNT(*) FROM perf WHERE advertiser_code=%s AND platform=%s AND date IN ({placeholders})",
-                        (adv_code, platform, *dates_in_file)).fetchone()[0]
-                    st.warning(f"⚠️ 저장 시 기존 **{will_delete:,}행**(매체 {platform}, "
-                               f"{min(dates_in_file)}~{max(dates_in_file)})이 삭제되고 "
-                               f"새 **{len(df):,}행**으로 교체됩니다.")
+                    dates_in_file=list(df["date"].unique())
+                    placeholders=",".join(["%s"]*len(dates_in_file))
+                    rows=q(f"SELECT COUNT(*) FROM perf WHERE advertiser_code=%s AND platform=%s AND date IN ({placeholders})",(adv_code,platform,*dates_in_file))
+                    will_delete=rows[0][0] if rows else 0
+                    st.warning(f"⚠️ 저장 시 기존 **{will_delete:,}행**(매체 {platform}, {min(dates_in_file)}~{max(dates_in_file)})이 삭제되고 새 **{len(df):,}행**으로 교체됩니다.")
                 elif mode.startswith("③"):
-                    will_delete = cur.execute(
-                        "SELECT COUNT(*) FROM perf WHERE advertiser_code=%s AND platform=%s",
-                        (adv_code, platform)).fetchone()[0]
-                    st.error(f"🚨 저장 시 현재 광고주의 **{platform} 매체 전체 {will_delete:,}행**이 "
-                             f"모두 삭제되고 새 **{len(df):,}행**으로 교체됩니다. 신중히 진행하세요!")
-                con.close()
+                    rows=q("SELECT COUNT(*) FROM perf WHERE advertiser_code=%s AND platform=%s",(adv_code,platform))
+                    will_delete=rows[0][0] if rows else 0
+                    st.error(f"🚨 저장 시 현재 광고주의 **{platform} 매체 전체 {will_delete:,}행**이 모두 삭제되고 새 **{len(df):,}행**으로 교체됩니다. 신중히 진행하세요!")
                 
                 # 모드 ③은 추가 확인 절차
                 proceed = True
