@@ -589,7 +589,7 @@ def get_raw_data_columns(adv_code, platform):
 def _ensure_funnel_table():
     con = psycopg2.connect(DB_URL); cur = con.cursor()
     cur.execute("""CREATE TABLE IF NOT EXISTS funnel_mapping (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY AUTOINCREMENT,
         advertiser_code TEXT NOT NULL,
         platform TEXT NOT NULL,
         step_order INTEGER NOT NULL,
