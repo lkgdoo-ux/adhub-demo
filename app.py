@@ -828,7 +828,7 @@ if page == "📈 대시보드" and adv_code:
     st.title(f"📈 {sel_name} — 성과 대시보드")
     rows = q("SELECT * FROM perf WHERE advertiser_code=%s", (adv_code,))
     cols = ["id","advertiser_code","platform","date","campaign","adgroup","impressions","clicks","cost","raw_data"]
-    raw = pd.DataFrame(rows, columns=cols)
+    raw = pd.DataFrame(rows)
     if raw.empty:
         st.warning("데이터가 없습니다. '데이터 업로드' 메뉴에서 파일을 올려주세요."); st.stop()
     raw["date"] = pd.to_datetime(raw["date"])
