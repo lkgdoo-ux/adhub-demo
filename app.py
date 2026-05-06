@@ -557,7 +557,7 @@ def get_raw_data_columns(adv_code, platform):
     return sorted(cols)
 
 def _ensure_funnel_table():
-    con = sqlite3.connect(DB); cur = con.cursor()
+    con = psycopg2.connect(DB_URL); cur = con.cursor()
     cur.execute("""CREATE TABLE IF NOT EXISTS funnel_mapping (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         advertiser_code TEXT NOT NULL,
@@ -796,7 +796,7 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True):
 # ============ 대시보드 ============
 if page == "📈 대시보드" and adv_code:
     st.title(f"📈 {sel_name} — 성과 대시보드")
-    raw = pd.read_sql("SELECT * FROM perf WHERE advertiser_code=%s", sqlite3.connect(DB), params=(adv_code,))
+    raw = pd.read_sql("SELECT * FROM perf WHERE advertiser_code=%s", psycopg2.connect(DB_URL), params=(adv_code,))
     if raw.empty:
         st.warning("데이터가 없습니다. '데이터 업로드' 메뉴에서 파일을 올려주세요."); st.stop()
     raw["date"] = pd.to_datetime(raw["date"])
@@ -1166,7 +1166,7 @@ elif page == "📤 데이터 업로드" and adv_code:
                             f"→ '🎯 전환지표 설정' 메뉴에서 매핑하세요.")
                 
                 # 모드별 영향도 미리 계산해서 보여주기
-                con = sqlite3.connect(DB); cur = con.cursor()
+                con = psycopg2.connect(DB_URL); cur = con.cursor()
                 if mode.startswith("②"):
                     dates_in_file = list(df["date"].unique())
                     placeholders = ",".join(["%s"] * len(dates_in_file))
@@ -1198,7 +1198,7 @@ elif page == "📤 데이터 업로드" and adv_code:
                 btn_type = "primary" if proceed else "secondary"
                 
                 if st.button(btn_label, type=btn_type, disabled=not proceed):
-                    con = sqlite3.connect(DB); cur = con.cursor()
+                    con = psycopg2.connect(DB_URL); cur = con.cursor()
                     deleted = 0
                     
                     if mode.startswith("②"):
@@ -1375,7 +1375,7 @@ elif page == "📋 업로드 이력" and adv_code:
             cc1, cc2, _ = st.columns([1, 1, 4])
             with cc1:
                 if st.button("✅ 삭제 확정", type="primary", key=f"confirm_{pid}"):
-                    con = sqlite3.connect(DB); cur = con.cursor()
+                    con = psycopg2.connect(DB_URL); cur = con.cursor()
                     if mode_str == '(legacy)':
                         cur.execute("""DELETE FROM perf WHERE advertiser_code=%s AND platform=%s
                                        AND upload_log_id IS NULL""", (adv_code, pf))
@@ -1399,7 +1399,7 @@ elif page == "🎯 전환지표 설정" and adv_code:
                              conversion_column AS 전환컬럼, conversion_label AS 라벨,
                              updated_at AS 수정시각 FROM conversion_mapping
                              WHERE advertiser_code=%s ORDER BY platform, campaign""",
-                          sqlite3.connect(DB), params=(adv_code,))
+                          psycopg2.connect(DB_URL), params=(adv_code,))
     st.subheader("📌 현재 매핑")
     if cur_map.empty: st.info("아직 매핑이 없습니다.")
     else: st.dataframe(cur_map, use_container_width=True, hide_index=True)
@@ -1407,7 +1407,7 @@ elif page == "🎯 전환지표 설정" and adv_code:
     if my_level in ("OWNER","EDITOR") or is_admin:
         st.subheader("➕ 매핑 추가/수정")
         raw = pd.read_sql("SELECT platform, campaign, raw_data FROM perf WHERE advertiser_code=%s",
-                          sqlite3.connect(DB), params=(adv_code,))
+                          psycopg2.connect(DB_URL), params=(adv_code,))
         c1, c2 = st.columns(2)
         with c1: sel_pf = st.selectbox("매체", ["GOOGLE","FACEBOOK"])
         with c2:
@@ -1533,7 +1533,7 @@ elif page == "🎯 전환지표 설정" and adv_code:
             st.subheader("👀 미리보기 (현재 설정 기준 — 저장 전이라도 즉시 반영)")
             preview_df = pd.read_sql(
                 "SELECT * FROM perf WHERE advertiser_code=%s AND platform=%s",
-                sqlite3.connect(DB), params=(adv_code, fpf))
+                psycopg2.connect(DB_URL), params=(adv_code, fpf))
             if not preview_df.empty:
                 preview_df["date"] = pd.to_datetime(preview_df["date"])
                 # order 채워주기
@@ -1546,7 +1546,7 @@ elif page == "📥 PDF 리포트" and adv_code:
     st.title("📥 PDF 리포트 다운로드")
     st.caption("선택한 기간·매체의 데이터를 PDF로 내보냅니다.")
     
-    raw = pd.read_sql("SELECT * FROM perf WHERE advertiser_code=%s", sqlite3.connect(DB), params=(adv_code,))
+    raw = pd.read_sql("SELECT * FROM perf WHERE advertiser_code=%s", psycopg2.connect(DB_URL), params=(adv_code,))
     if raw.empty:
         st.warning("데이터가 없습니다."); st.stop()
     raw["date"] = pd.to_datetime(raw["date"])
@@ -1615,7 +1615,7 @@ elif page == "🏢 광고주 관리":
                           COALESCE(show_conversion,1) AS 전환표시,
                           COALESCE(show_creative,0) AS 소재표시,
                           created_at AS 생성일
-                          FROM advertisers ORDER BY created_at DESC""", sqlite3.connect(DB))
+                          FROM advertisers ORDER BY created_at DESC""", psycopg2.connect(DB_URL))
     st.subheader(f"등록된 광고주 ({len(advs)}개)")
     advs_show = advs.copy()
     advs_show["총예산"] = advs_show["총예산"].apply(lambda x: f"₩{x:,.0f}")
@@ -1703,7 +1703,7 @@ elif page == "👤 계정 관리":
     LEFT JOIN permissions p ON u.email=p.email
     GROUP BY u.email
     ORDER BY u.email
-    """, sqlite3.connect(DB))
+    """, psycopg2.connect(DB_URL))
 
     st.subheader("📋 계정 목록")
     st.dataframe(users_df, use_container_width=True, hide_index=True)
