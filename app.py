@@ -1584,7 +1584,16 @@ elif page == "📥 PDF 리포트" and adv_code:
         st.warning("선택한 조건에 데이터가 없습니다."); st.stop()
     
     mapping = get_conversion_mapping(adv_code)
-    df_rep = compute_metrics(df_rep, mapping)
+    df_all = compute_metrics(df_all, mapping)
+
+    if "creative" not in df_all.columns:
+        def extract_creative(x):
+            try:
+                j = json.loads(x) if isinstance(x, str) else x
+                return j.get("creative") or j.get("ad_name") or j.get("ad") or None
+            except:
+                return None
+        df_all["creative"] = df_all["raw_data"].apply(extract_creative)
     
     # 미리보기 KPI
     st.subheader("📊 리포트 요약 미리보기")
