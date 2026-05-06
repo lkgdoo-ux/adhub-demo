@@ -78,8 +78,9 @@ user = st.session_state.user
 is_admin = user["role"] in ("AGENCY_ADMIN", "SUPER_ADMIN")
 
 # ============ 사이드바 ============
-if user["role"] == "OWNER":
-    my_advs = [(r[0], r[1], "OWNER") for r in q("SELECT code, name FROM advertisers ORDER BY name")]
+if user["role"] in ["OWNER","AGENCY_ADMIN"]:
+    rows = q("SELECT code, name FROM advertisers ORDER BY name")
+    my_advs = [(r[0], r[1], "OWNER") for r in rows]
 else:
     my_advs = q("""
     SELECT a.code, a.name, p.level 
