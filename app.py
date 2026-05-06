@@ -1671,7 +1671,9 @@ elif page == "🏢 광고주 관리":
                     email,pw=create_viewer_account(adv_code_clean,new_name)
                     st.success(f"{new_name} 추가 완료\n뷰어 계정: {email}\n비밀번호: {pw}")
                     st.rerun()
-                except sqlite3.IntegrityError: st.error("이미 존재하는 코드입니다")
+                import psycopg2
+                except psycopg2.IntegrityError:
+                    st.error("이미 존재하는 코드입니다")
     st.divider()
 
     st.subheader("✏️ 이름 / 예산 / 표시 옵션 편집")
