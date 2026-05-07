@@ -1,75 +1,129 @@
 # app.py — AdHub v3
 import streamlit as st
 import pandas as pd
-import psycopg2, json
+import sqlite3, json
 from datetime import datetime
 import plotly.express as px
 import plotly.graph_objects as go
 
 st.set_page_config(page_title="AdHub", page_icon="📊", layout="wide")
-
-DB_URL = st.secrets["DB_URL"]
-
-# 🔥 DB 조회 캐싱 (핵심)
-@st.cache_data(ttl=60)
-def q(sql, params=(), fetch=True):
-    conn = psycopg2.connect(DB_URL)
-    cur = conn.cursor()
-    cur.execute(sql, params)
-    rows = cur.fetchall() if fetch else None
-    conn.commit()
-    cur.close()
-    conn.close()
-    return rows
-
-# 🔥 DataFrame 조회 캐싱
-@st.cache_data(ttl=60)
-def qdf(sql, params=()):
-    conn = psycopg2.connect(DB_URL)
-    cur = conn.cursor()
-    cur.execute(sql, params)
-    rows = cur.fetchall()
-    colnames = [desc[0] for desc in cur.description]
-    cur.close()
-    conn.close()
-    return pd.DataFrame(rows, columns=colnames)
+DB = "adhub.db"
 
 # ============ DB ============
 def init_db():
-    conn=psycopg2.connect(DB_URL); cur=conn.cursor()
-    cur.execute("CREATE TABLE IF NOT EXISTS users (email TEXT PRIMARY KEY,name TEXT,role TEXT,password TEXT);")
-    cur.execute("CREATE TABLE IF NOT EXISTS advertisers (code TEXT PRIMARY KEY,name TEXT,total_budget FLOAT DEFAULT 0,created_at TIMESTAMP DEFAULT NOW());")
-    cur.execute("CREATE TABLE IF NOT EXISTS permissions (email TEXT,advertiser_code TEXT,level TEXT,PRIMARY KEY (email,advertiser_code));")
-    cur.execute("CREATE TABLE IF NOT EXISTS perf (id SERIAL PRIMARY KEY,advertiser_code TEXT,platform TEXT,date TEXT,campaign TEXT,adgroup TEXT,impressions INT,clicks INT,cost FLOAT,raw_data TEXT);")
-    cur.execute("CREATE TABLE IF NOT EXISTS upload_log (id SERIAL PRIMARY KEY,email TEXT,advertiser_code TEXT,platform TEXT,file_name TEXT,rows INT,uploaded_at TIMESTAMP DEFAULT NOW());")
-    cur.execute("CREATE TABLE IF NOT EXISTS conversion_mapping (id SERIAL PRIMARY KEY,advertiser_code TEXT,platform TEXT,campaign TEXT,conversion_column TEXT,conversion_label TEXT,updated_at TIMESTAMP DEFAULT NOW(),UNIQUE(advertiser_code,platform,campaign));")
-    conn.commit(); cur.close(); conn.close()
+    con = sqlite3.connect(DB); cur = con.cursor()
+    cur.executescript("""
+    CREATE TABLE IF NOT EXISTS users (email TEXT PRIMARY KEY, name TEXT, role TEXT, password TEXT);
+    CREATE TABLE IF NOT EXISTS advertisers (
+        code TEXT PRIMARY KEY, name TEXT,
+        total_budget REAL DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now')));
+    CREATE TABLE IF NOT EXISTS permissions (
+        email TEXT, advertiser_code TEXT, level TEXT,
+        PRIMARY KEY (email, advertiser_code));
+    CREATE TABLE IF NOT EXISTS perf (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        advertiser_code TEXT, platform TEXT, date TEXT,
+        campaign TEXT, adgroup TEXT,
+        impressions INTEGER, clicks INTEGER, cost REAL, raw_data TEXT);
+    CREATE TABLE IF NOT EXISTS upload_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT, advertiser_code TEXT, platform TEXT,
+        file_name TEXT, rows INTEGER, uploaded_at TEXT);
+    CREATE TABLE IF NOT EXISTS conversion_mapping (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        advertiser_code TEXT, platform TEXT, campaign TEXT,
+        conversion_column TEXT, conversion_label TEXT, updated_at TEXT,
+        UNIQUE(advertiser_code, platform, campaign));
+    """)
+    cur.executemany("INSERT OR IGNORE INTO users VALUES (?,?,?,?)", [
+        ("admin@adhub.com",  "김에이전시", "AGENCY_ADMIN", "1234"),
+        ("manager@scon.com", "박마케터",   "MANAGER",      "1234"),
+        ("viewer@scon.com",  "최뷰어",     "VIEWER",       "1234"),
+    ])
+    cur.executemany("INSERT OR IGNORE INTO advertisers (code,name) VALUES (?,?)", [
+        ("SCONEC", "스코넥엔터테인먼트"), ("GAME_A", "게임사 A"), ("GAME_B", "게임사 B"),
+    ])
+    cur.executemany("INSERT OR IGNORE INTO permissions VALUES (?,?,?)", [
+        ("admin@adhub.com",  "SCONEC", "OWNER"),
+        ("admin@adhub.com",  "GAME_A", "OWNER"),
+        ("admin@adhub.com",  "GAME_B", "OWNER"),
+        ("manager@scon.com", "SCONEC", "EDITOR"),
+        ("viewer@scon.com",  "SCONEC", "VIEWER"),
+    ])
+    con.commit(); con.close()
 
-def migrate_db(): pass
+def migrate_db():
+    con = sqlite3.connect(DB); cur = con.cursor()
+    cols = [r[1] for r in cur.execute("PRAGMA table_info(advertisers)").fetchall()]
+    if "created_at" not in cols:
+        cur.execute("ALTER TABLE advertisers ADD COLUMN created_at TEXT")
+        cur.execute("UPDATE advertisers SET created_at = datetime('now') WHERE created_at IS NULL")
+    if "total_budget" not in cols:
+        cur.execute("ALTER TABLE advertisers ADD COLUMN total_budget REAL DEFAULT 0")
+    if "show_conversion" not in cols:
+        cur.execute("ALTER TABLE advertisers ADD COLUMN show_conversion INTEGER DEFAULT 1")
+    if "show_creative" not in cols:
+        cur.execute("ALTER TABLE advertisers ADD COLUMN show_creative INTEGER DEFAULT 0")
+    cols = [r[1] for r in cur.execute("PRAGMA table_info(perf)").fetchall()]
+    if "raw_data" not in cols:
+        cur.execute("ALTER TABLE perf ADD COLUMN raw_data TEXT")
+    if "upload_log_id" not in cols:
+        cur.execute("ALTER TABLE perf ADD COLUMN upload_log_id INTEGER")
+    if "creative" not in cols:
+        cur.execute("ALTER TABLE perf ADD COLUMN creative TEXT")
+    cols = [r[1] for r in cur.execute("PRAGMA table_info(upload_log)").fetchall()]
+    if "upload_mode" not in cols:
+        cur.execute("ALTER TABLE upload_log ADD COLUMN upload_mode TEXT")
+    if "deleted_rows" not in cols:
+        cur.execute("ALTER TABLE upload_log ADD COLUMN deleted_rows INTEGER DEFAULT 0")
+        cur.execute("""CREATE TABLE IF NOT EXISTS funnel_mapping (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        advertiser_code TEXT NOT NULL,
+        platform TEXT NOT NULL,
+        step_order INTEGER NOT NULL,
+        column_name TEXT NOT NULL,
+        label TEXT NOT NULL,
+        cvr_base TEXT DEFAULT 'clicks'
+    )""")
+    con.commit(); con.close()
 
 init_db(); migrate_db()
 
-def q(sql,params=(),fetch=True):
-    conn=psycopg2.connect(DB_URL); cur=conn.cursor(); cur.execute(sql,params)
-    rows=cur.fetchall() if fetch else None
-    conn.commit(); cur.close(); conn.close(); return rows
+def q(sql, params=(), fetch=True):
+    con = sqlite3.connect(DB); cur = con.cursor(); cur.execute(sql, params)
+    rows = cur.fetchall() if fetch else None
+    con.commit(); con.close(); return rows
 
-def safe_div(a,b): return (a/b) if b else 0
+def safe_div(a, b): return (a/b) if b else 0
 
 import secrets
 
-def create_viewer_account(adv_code,adv_name):
-    email=f"viewer_{adv_code.lower()}@adhub.com"; temp_pw=secrets.token_urlsafe(6)
-    q("INSERT INTO users (email,name,role,password) VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING",(email,f"{adv_name}_뷰어","VIEWER",temp_pw),fetch=False)
-    q("INSERT INTO permissions (email,advertiser_code,level) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING",(email,adv_code,"VIEWER"),fetch=False)
-    return email,temp_pw
+def create_viewer_account(adv_code, adv_name):
+    email = f"viewer_{adv_code.lower()}@adhub.com"
+    temp_pw = secrets.token_urlsafe(6)
+
+    q(
+        "INSERT OR IGNORE INTO users VALUES (?,?,?,?)",
+        (email, f"{adv_name}_뷰어", "VIEWER", temp_pw),
+        fetch=False
+    )
+
+    q(
+        "INSERT OR IGNORE INTO permissions VALUES (?,?,?)",
+        (email, adv_code, "VIEWER"),
+        fetch=False
+    )
+
+    return email, temp_pw
+
 # ============ 로그인 ============
 def login_view():
     st.title("📊 AdHub 로그인")
     st.caption("데모 계정: admin@adhub.com / manager@scon.com / viewer@scon.com (비번: 1234)")
     email = st.text_input("이메일"); pw = st.text_input("비밀번호", type="password")
     if st.button("로그인", type="primary"):
-        row = q("SELECT email,name,role FROM users WHERE email=%s AND password=%s", (email, pw))
+        row = q("SELECT email,name,role FROM users WHERE email=? AND password=?", (email, pw))
         if row:
             r = row[0]
             st.session_state.user = {"email": r[0], "name": r[1], "role": r[2]}; st.rerun()
@@ -81,17 +135,8 @@ user = st.session_state.user
 is_admin = user["role"] in ("AGENCY_ADMIN", "SUPER_ADMIN")
 
 # ============ 사이드바 ============
-if user["role"] in ["OWNER","AGENCY_ADMIN"]:
-    rows = q("SELECT code, name FROM advertisers ORDER BY name")
-    my_advs = [(r[0], r[1], "OWNER") for r in rows]
-else:
-    my_advs = q("""
-    SELECT a.code, a.name, p.level 
-    FROM permissions p
-    JOIN advertisers a ON a.code=p.advertiser_code 
-    WHERE p.email=%s 
-    ORDER BY a.name
-    """, (user["email"],))
+my_advs = q("""SELECT a.code, a.name, p.level FROM permissions p
+    JOIN advertisers a ON a.code=p.advertiser_code WHERE p.email=? ORDER BY a.name""", (user["email"],))
 
 with st.sidebar:
     st.markdown(f"**👤 {user['name']}**  \n`{user['role']}`")
@@ -179,7 +224,7 @@ def parse_file(file, platform):
 
 # ============ 전환 매핑 ============
 def get_conversion_mapping(adv_code):
-    rows = q("SELECT platform, campaign, conversion_column, conversion_label FROM conversion_mapping WHERE advertiser_code=%s", (adv_code,))
+    rows = q("SELECT platform, campaign, conversion_column, conversion_label FROM conversion_mapping WHERE advertiser_code=?", (adv_code,))
     return {(p, c): (col, lbl) for p, c, col, lbl in rows}
 
 def resolve_conv(mapping, platform, campaign):
@@ -577,7 +622,7 @@ def render_adgroup_table(df, conv_label, key, show_conversion=True):
 def get_raw_data_columns(adv_code, platform):
     """업로드된 raw_data에서 사용 가능한 숫자 컬럼 목록 추출"""
     rows = q("""SELECT raw_data FROM perf
-                WHERE advertiser_code=%s AND platform=%s AND raw_data IS NOT NULL
+                WHERE advertiser_code=? AND platform=? AND raw_data IS NOT NULL
                 ORDER BY id DESC LIMIT 100""", (adv_code, platform))
     cols = set()
     for r in rows:
@@ -590,22 +635,32 @@ def get_raw_data_columns(adv_code, platform):
     return sorted(cols)
 
 def _ensure_funnel_table():
-    return
+    con = sqlite3.connect(DB); cur = con.cursor()
+    cur.execute("""CREATE TABLE IF NOT EXISTS funnel_mapping (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        advertiser_code TEXT NOT NULL,
+        platform TEXT NOT NULL,
+        step_order INTEGER NOT NULL,
+        column_name TEXT NOT NULL,
+        label TEXT NOT NULL,
+        cvr_base TEXT DEFAULT 'clicks'
+    )""")
+    con.commit(); con.close()
 
 def get_funnel_steps(adv_code, platform):
     _ensure_funnel_table()
     rows = q("""SELECT step_order, column_name, label, COALESCE(cvr_base,'clicks')
-                FROM funnel_mapping WHERE advertiser_code=%s AND platform=%s
+                FROM funnel_mapping WHERE advertiser_code=? AND platform=?
                 ORDER BY step_order""", (adv_code, platform))
     return [{"order": r[0], "column": r[1], "label": r[2], "cvr_base": r[3]} for r in rows]
 def save_funnel_steps(adv_code, platform, steps):
     _ensure_funnel_table()
-    q("DELETE FROM funnel_mapping WHERE advertiser_code=%s AND platform=%s",
+    q("DELETE FROM funnel_mapping WHERE advertiser_code=? AND platform=?",
       (adv_code, platform), fetch=False)
     for i, s in enumerate(steps, 1):
         q("""INSERT INTO funnel_mapping
              (advertiser_code,platform,step_order,column_name,label,cvr_base)
-             VALUES (%s,%s,%s,%s,%s,%s)""",
+             VALUES (?,?,?,?,?,?)""",
           (adv_code, platform, i, s["column"], s["label"], s["cvr_base"]), fetch=False)
         
 def render_funnel_table(df, funnel_steps, group_by="overall", key=""):
@@ -689,17 +744,14 @@ def render_funnel_table(df, funnel_steps, group_by="overall", key=""):
 # ============ 광고 소재 탭 ============
 def render_creative_tab(df_pf, platform, key_prefix, show_conv=True):
     """광고 소재별 성과 분석 화면"""
-    if "creative" not in df_pf.columns:
-        st.info(f"💡 {platform} 매체에 광고 소재 데이터가 없습니다.\n\n데이터 업로드 시 '🎨 광고 소재 컬럼'을 매핑한 뒤 다시 시도해주세요.")
-        return
-
     df_cre = df_pf[df_pf["creative"].notna() & (df_pf["creative"] != "") & (df_pf["creative"] != "None")]
-
     if df_cre.empty:
-        st.info(f"💡 {platform} 매체에 광고 소재 데이터가 없습니다.\n\n데이터 업로드 시 '🎨 광고 소재 컬럼'을 매핑한 뒤 다시 시도해주세요.")
+        st.info(f"💡 {platform} 매체에 광고 소재 데이터가 없습니다.\n\n"
+                f"데이터 업로드 시 '🎨 광고 소재 컬럼'을 매핑한 뒤 다시 시도해주세요.")
         return
-
-    st.caption("🎨 광고 이미지·영상·텍스트별 성과를 분석합니다. 기본은 전체 데이터 기준이며, 필요 시 캠페인/광고그룹으로 필터링하세요.")
+    
+    st.caption("🎨 광고 이미지·영상·텍스트별 성과를 분석합니다. "
+               "기본은 전체 데이터 기준이며, 필요 시 캠페인/광고그룹으로 필터링하세요.")
     
     # ===== 필터 영역 =====
     with st.container():
@@ -820,28 +872,40 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True):
         st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_daily_chart")
 
 # ============ 대시보드 ============
-if page=="📈 대시보드" and adv_code:
+if page == "📈 대시보드" and adv_code:
     st.title(f"📈 {sel_name} — 성과 대시보드")
-    rows=q("SELECT * FROM perf WHERE advertiser_code=%s",(adv_code,))
-    cols=["id","advertiser_code","platform","date","campaign","adgroup","impressions","clicks","cost","raw_data"]
-    raw=pd.DataFrame([r[:len(cols)] for r in rows],columns=cols)
-    if raw.empty: st.warning("데이터가 없습니다. '데이터 업로드' 메뉴에서 파일을 올려주세요."); st.stop()
-    raw["date"]=pd.to_datetime(raw["date"],errors="coerce"); raw=raw.dropna(subset=["date"])
-    min_d,max_d=raw["date"].min().date(),raw["date"].max().date()
-    adv_row=q("SELECT total_budget, COALESCE(show_conversion,1) FROM advertisers WHERE code=%s",(adv_code,))
-    total_budget=float(adv_row[0][0] or 0) if adv_row else 0; show_conv=bool(adv_row[0][1]) if adv_row else True
-    fc1,_=st.columns([3,2])
-    with fc1: date_range=st.date_input("📅 기간 선택",value=(min_d,max_d),min_value=min_d,max_value=max_d)
-    df_all=raw.copy()
-    if isinstance(date_range,tuple) and len(date_range)==2: d_from,d_to=date_range; df_all=df_all[(df_all["date"]>=pd.Timestamp(d_from))&(df_all["date"]<=pd.Timestamp(d_to))]
-    mapping=get_conversion_mapping(adv_code); df_all=compute_metrics(df_all,mapping)
+    raw = pd.read_sql("SELECT * FROM perf WHERE advertiser_code=?", sqlite3.connect(DB), params=(adv_code,))
+    if raw.empty:
+        st.warning("데이터가 없습니다. '데이터 업로드' 메뉴에서 파일을 올려주세요."); st.stop()
+    raw["date"] = pd.to_datetime(raw["date"])
+    min_d, max_d = raw["date"].min().date(), raw["date"].max().date()
+
+    adv_row = q("SELECT total_budget, COALESCE(show_conversion,1) FROM advertisers WHERE code=?", (adv_code,))
+    if adv_row:
+        total_budget = float(adv_row[0][0] or 0)
+        show_conv = bool(adv_row[0][1])
+    else:
+        total_budget = 0; show_conv = True
+
+    fc1, _ = st.columns([3,2])
+    with fc1:
+        date_range = st.date_input("📅 기간 선택", value=(min_d, max_d),
+                                   min_value=min_d, max_value=max_d)
+
+    df_all = raw.copy()
+    if isinstance(date_range, tuple) and len(date_range)==2:
+        d_from, d_to = date_range
+        df_all = df_all[(df_all["date"]>=pd.Timestamp(d_from)) & (df_all["date"]<=pd.Timestamp(d_to))]
+
+    mapping = get_conversion_mapping(adv_code)
+    df_all = compute_metrics(df_all, mapping)
 
     # 동적 탭 구성: 데이터가 있는 매체만 표시
     available = sorted(df_all["platform"].unique(),
                        key=lambda x: {"GOOGLE":0,"FACEBOOK":1}.get(x,99))
     
     # 광고주별 소재 표시 옵션 조회
-    cre_row = q("SELECT COALESCE(show_creative,0) FROM advertisers WHERE code=%s", (adv_code,))
+    cre_row = q("SELECT COALESCE(show_creative,0) FROM advertisers WHERE code=?", (adv_code,))
     show_creative = bool(cre_row[0][0]) if cre_row else False
     
     tab_labels = ["📊 Summary"]
@@ -1180,16 +1244,23 @@ elif page == "📤 데이터 업로드" and adv_code:
                             f"→ '🎯 전환지표 설정' 메뉴에서 매핑하세요.")
                 
                 # 모드별 영향도 미리 계산해서 보여주기
+                con = sqlite3.connect(DB); cur = con.cursor()
                 if mode.startswith("②"):
-                    dates_in_file=list(df["date"].unique())
-                    placeholders=",".join(["%s"]*len(dates_in_file))
-                    rows=q(f"SELECT COUNT(*) FROM perf WHERE advertiser_code=%s AND platform=%s AND date IN ({placeholders})",(adv_code,platform,*dates_in_file))
-                    will_delete=rows[0][0] if rows else 0
-                    st.warning(f"⚠️ 저장 시 기존 **{will_delete:,}행**(매체 {platform}, {min(dates_in_file)}~{max(dates_in_file)})이 삭제되고 새 **{len(df):,}행**으로 교체됩니다.")
+                    dates_in_file = list(df["date"].unique())
+                    placeholders = ",".join(["?"] * len(dates_in_file))
+                    will_delete = cur.execute(
+                        f"SELECT COUNT(*) FROM perf WHERE advertiser_code=? AND platform=? AND date IN ({placeholders})",
+                        (adv_code, platform, *dates_in_file)).fetchone()[0]
+                    st.warning(f"⚠️ 저장 시 기존 **{will_delete:,}행**(매체 {platform}, "
+                               f"{min(dates_in_file)}~{max(dates_in_file)})이 삭제되고 "
+                               f"새 **{len(df):,}행**으로 교체됩니다.")
                 elif mode.startswith("③"):
-                    rows=q("SELECT COUNT(*) FROM perf WHERE advertiser_code=%s AND platform=%s",(adv_code,platform))
-                    will_delete=rows[0][0] if rows else 0
-                    st.error(f"🚨 저장 시 현재 광고주의 **{platform} 매체 전체 {will_delete:,}행**이 모두 삭제되고 새 **{len(df):,}행**으로 교체됩니다. 신중히 진행하세요!")
+                    will_delete = cur.execute(
+                        "SELECT COUNT(*) FROM perf WHERE advertiser_code=? AND platform=?",
+                        (adv_code, platform)).fetchone()[0]
+                    st.error(f"🚨 저장 시 현재 광고주의 **{platform} 매체 전체 {will_delete:,}행**이 "
+                             f"모두 삭제되고 새 **{len(df):,}행**으로 교체됩니다. 신중히 진행하세요!")
+                con.close()
                 
                 # 모드 ③은 추가 확인 절차
                 proceed = True
@@ -1205,24 +1276,24 @@ elif page == "📤 데이터 업로드" and adv_code:
                 btn_type = "primary" if proceed else "secondary"
                 
                 if st.button(btn_label, type=btn_type, disabled=not proceed):
-                    con = psycopg2.connect(DB_URL); cur = con.cursor()
+                    con = sqlite3.connect(DB); cur = con.cursor()
                     deleted = 0
                     
                     if mode.startswith("②"):
                         dates_in_file = list(df["date"].unique())
-                        placeholders = ",".join(["%s"] * len(dates_in_file))
+                        placeholders = ",".join(["?"] * len(dates_in_file))
                         cur.execute(
-                            f"DELETE FROM perf WHERE advertiser_code=%s AND platform=%s AND date IN ({placeholders})",
+                            f"DELETE FROM perf WHERE advertiser_code=? AND platform=? AND date IN ({placeholders})",
                             (adv_code, platform, *dates_in_file))
                         deleted = cur.rowcount
                     elif mode.startswith("③"):
-                        cur.execute("DELETE FROM perf WHERE advertiser_code=%s AND platform=%s",
+                        cur.execute("DELETE FROM perf WHERE advertiser_code=? AND platform=?",
                                     (adv_code, platform))
                         deleted = cur.rowcount
                     
                     cur.execute("""INSERT INTO upload_log
                         (email,advertiser_code,platform,file_name,rows,uploaded_at,upload_mode,deleted_rows)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                        VALUES (?,?,?,?,?,?,?,?)""",
                         (user["email"], adv_code, platform, file.name, len(df),
                          datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                          mode, deleted))
@@ -1231,7 +1302,7 @@ elif page == "📤 데이터 업로드" and adv_code:
                     for _, r in df.iterrows():
                         cre_val = r["creative"] if ("creative" in df.columns and pd.notna(r["creative"])) else None
                         cur.execute(
-                            "INSERT INTO perf (advertiser_code,platform,date,campaign,adgroup,impressions,clicks,cost,raw_data,upload_log_id,creative) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                            "INSERT INTO perf (advertiser_code,platform,date,campaign,adgroup,impressions,clicks,cost,raw_data,upload_log_id,creative) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                             (adv_code, platform, r["date"], r["campaign"], r["adgroup"],
                              int(r["impressions"]), int(r["clicks"]),
                              float(r["cost"]), r["raw_data"], upload_id, cre_val)
@@ -1259,7 +1330,7 @@ elif page == "📋 업로드 이력" and adv_code:
     
     logs_raw = q("""SELECT id, uploaded_at, email, platform, file_name, rows,
                     COALESCE(upload_mode,'(legacy)'), COALESCE(deleted_rows,0)
-                    FROM upload_log WHERE advertiser_code=%s ORDER BY id DESC""", (adv_code,))
+                    FROM upload_log WHERE advertiser_code=? ORDER BY id DESC""", (adv_code,))
     
     if not logs_raw:
         st.info("업로드 이력이 없습니다."); st.stop()
@@ -1291,11 +1362,11 @@ elif page == "📋 업로드 이력" and adv_code:
         # 현재 DB에 남아 있는 행수 계산
         if mode_str == '(legacy)':
             cur_rows = q("""SELECT COUNT(*) FROM perf
-                            WHERE advertiser_code=%s AND platform=%s AND upload_log_id IS NULL""",
+                            WHERE advertiser_code=? AND platform=? AND upload_log_id IS NULL""",
                          (adv_code, pf))[0][0]
             unresolvable = legacy_count_per_pf.get(pf, 0) > 1
         else:
-            cur_rows = q("SELECT COUNT(*) FROM perf WHERE upload_log_id=%s", (log_id,))[0][0]
+            cur_rows = q("SELECT COUNT(*) FROM perf WHERE upload_log_id=?", (log_id,))[0][0]
             unresolvable = False
         
         c = st.columns([0.7, 1.8, 2.4, 1, 2.6, 0.9, 1.4, 0.7])
@@ -1335,11 +1406,11 @@ elif page == "📋 업로드 이력" and adv_code:
         
         if mode_str == '(legacy)':
             cur_rows = q("""SELECT COUNT(*) FROM perf
-                            WHERE advertiser_code=%s AND platform=%s AND upload_log_id IS NULL""",
+                            WHERE advertiser_code=? AND platform=? AND upload_log_id IS NULL""",
                          (adv_code, pf))[0][0]
             unresolvable = legacy_count_per_pf.get(pf, 0) > 1
         else:
-            cur_rows = q("SELECT COUNT(*) FROM perf WHERE upload_log_id=%s", (log_id,))[0][0]
+            cur_rows = q("SELECT COUNT(*) FROM perf WHERE upload_log_id=?", (log_id,))[0][0]
             unresolvable = False
         
         st.divider()
@@ -1370,7 +1441,7 @@ elif page == "📋 업로드 이력" and adv_code:
             ec1, ec2, _ = st.columns([1.2, 1, 4])
             with ec1:
                 if st.button("📝 이력 레코드만 삭제", key=f"legacy_log_only_{pid}"):
-                    q("DELETE FROM upload_log WHERE id=%s", (pid,), fetch=False)
+                    q("DELETE FROM upload_log WHERE id=?", (pid,), fetch=False)
                     st.session_state.pop("pending_delete", None)
                     st.success("이력 레코드 삭제 완료"); st.rerun()
             with ec2:
@@ -1382,14 +1453,14 @@ elif page == "📋 업로드 이력" and adv_code:
             cc1, cc2, _ = st.columns([1, 1, 4])
             with cc1:
                 if st.button("✅ 삭제 확정", type="primary", key=f"confirm_{pid}"):
-                    con = psycopg2.connect(DB_URL); cur = con.cursor()
+                    con = sqlite3.connect(DB); cur = con.cursor()
                     if mode_str == '(legacy)':
-                        cur.execute("""DELETE FROM perf WHERE advertiser_code=%s AND platform=%s
+                        cur.execute("""DELETE FROM perf WHERE advertiser_code=? AND platform=?
                                        AND upload_log_id IS NULL""", (adv_code, pf))
                     else:
-                        cur.execute("DELETE FROM perf WHERE upload_log_id=%s", (log_id,))
+                        cur.execute("DELETE FROM perf WHERE upload_log_id=?", (log_id,))
                     deleted = cur.rowcount
-                    cur.execute("DELETE FROM upload_log WHERE id=%s", (log_id,))
+                    cur.execute("DELETE FROM upload_log WHERE id=?", (log_id,))
                     con.commit(); con.close()
                     st.session_state.pop("pending_delete", None)
                     st.success(f"✅ {deleted:,}행 + 이력 삭제 완료")
@@ -1402,21 +1473,19 @@ elif page == "📋 업로드 이력" and adv_code:
 elif page == "🎯 전환지표 설정" and adv_code:
     st.title("🎯 전환지표 매핑 설정")
     st.caption("캠페인 성격에 따라 어떤 컬럼을 '전환수'로 쓸지, 어떤 라벨(CPI/CPA)로 표시할지 지정합니다.")
-    cur_map = qdf("""
-    SELECT platform AS 매체, campaign AS 캠페인,
-       conversion_column AS 전환컬럼, conversion_label AS 라벨,
-       updated_at AS 수정시각
-    FROM conversion_mapping
-    WHERE advertiser_code=%s
-    ORDER BY platform, campaign
-    """, (adv_code,))
+    cur_map = pd.read_sql("""SELECT platform AS 매체, campaign AS 캠페인,
+                             conversion_column AS 전환컬럼, conversion_label AS 라벨,
+                             updated_at AS 수정시각 FROM conversion_mapping
+                             WHERE advertiser_code=? ORDER BY platform, campaign""",
+                          sqlite3.connect(DB), params=(adv_code,))
     st.subheader("📌 현재 매핑")
     if cur_map.empty: st.info("아직 매핑이 없습니다.")
     else: st.dataframe(cur_map, use_container_width=True, hide_index=True)
     st.divider()
     if my_level in ("OWNER","EDITOR") or is_admin:
         st.subheader("➕ 매핑 추가/수정")
-        raw = qdf("SELECT platform, campaign, raw_data FROM perf WHERE advertiser_code=%s", (adv_code,))
+        raw = pd.read_sql("SELECT platform, campaign, raw_data FROM perf WHERE advertiser_code=?",
+                          sqlite3.connect(DB), params=(adv_code,))
         c1, c2 = st.columns(2)
         with c1: sel_pf = st.selectbox("매체", ["GOOGLE","FACEBOOK"])
         with c2:
@@ -1436,7 +1505,7 @@ elif page == "🎯 전환지표 설정" and adv_code:
             with c4: sel_lbl = st.selectbox("표시 라벨", ["CPI","CPA","CPL","CPV","CPE"])
             if st.button("💾 저장", type="primary"):
                 q("""INSERT INTO conversion_mapping (advertiser_code,platform,campaign,conversion_column,conversion_label,updated_at)
-                     VALUES (%s,%s,%s,%s,%s,%s)
+                     VALUES (?,?,?,?,?,?)
                      ON CONFLICT(advertiser_code,platform,campaign) DO UPDATE SET
                        conversion_column=excluded.conversion_column,
                        conversion_label=excluded.conversion_label,
@@ -1451,7 +1520,7 @@ elif page == "🎯 전환지표 설정" and adv_code:
                 format_func=lambda i: f"{cur_map.iloc[i]['매체']} / {cur_map.iloc[i]['캠페인']} → {cur_map.iloc[i]['전환컬럼']}({cur_map.iloc[i]['라벨']})")
             if st.button("삭제"):
                 row = cur_map.iloc[del_idx]
-                q("DELETE FROM conversion_mapping WHERE advertiser_code=%s AND platform=%s AND campaign=%s",
+                q("DELETE FROM conversion_mapping WHERE advertiser_code=? AND platform=? AND campaign=?",
                   (adv_code, row["매체"], row["캠페인"]), fetch=False)
                 st.success("삭제됨"); st.rerun()
 
@@ -1540,8 +1609,9 @@ elif page == "🎯 전환지표 설정" and adv_code:
         if new_steps and all(s["label"].strip() for s in new_steps):
             st.divider()
             st.subheader("👀 미리보기 (현재 설정 기준 — 저장 전이라도 즉시 반영)")
-            preview_df = qdf(
-                "SELECT * FROM perf WHERE advertiser_code=%s AND platform=%s",(adv_code, fpf))
+            preview_df = pd.read_sql(
+                "SELECT * FROM perf WHERE advertiser_code=? AND platform=?",
+                sqlite3.connect(DB), params=(adv_code, fpf))
             if not preview_df.empty:
                 preview_df["date"] = pd.to_datetime(preview_df["date"])
                 # order 채워주기
@@ -1554,12 +1624,12 @@ elif page == "📥 PDF 리포트" and adv_code:
     st.title("📥 PDF 리포트 다운로드")
     st.caption("선택한 기간·매체의 데이터를 PDF로 내보냅니다.")
     
-    raw = qdf("SELECT * FROM perf WHERE advertiser_code=%s",(adv_code,))
+    raw = pd.read_sql("SELECT * FROM perf WHERE advertiser_code=?", sqlite3.connect(DB), params=(adv_code,))
     if raw.empty:
         st.warning("데이터가 없습니다."); st.stop()
     raw["date"] = pd.to_datetime(raw["date"])
     
-    adv_row = q("SELECT name, total_budget, COALESCE(show_conversion,1) FROM advertisers WHERE code=%s", (adv_code,))
+    adv_row = q("SELECT name, total_budget, COALESCE(show_conversion,1) FROM advertisers WHERE code=?", (adv_code,))
     adv_name = adv_row[0][0] if adv_row else adv_code
     total_budget = float(adv_row[0][1] or 0) if adv_row else 0
     show_conv = bool(adv_row[0][2]) if adv_row else True
@@ -1584,16 +1654,7 @@ elif page == "📥 PDF 리포트" and adv_code:
         st.warning("선택한 조건에 데이터가 없습니다."); st.stop()
     
     mapping = get_conversion_mapping(adv_code)
-    df_all = compute_metrics(df_all, mapping)
-
-    if "creative" not in df_all.columns:
-        def extract_creative(x):
-            try:
-                j = json.loads(x) if isinstance(x, str) else x
-                return j.get("creative") or j.get("ad_name") or j.get("ad") or None
-            except:
-                return None
-        df_all["creative"] = df_all["raw_data"].apply(extract_creative)
+    df_rep = compute_metrics(df_rep, mapping)
     
     # 미리보기 KPI
     st.subheader("📊 리포트 요약 미리보기")
@@ -1627,12 +1688,12 @@ elif page == "📥 PDF 리포트" and adv_code:
 elif page == "🏢 광고주 관리":
     st.title("🏢 광고주 관리")
     if not is_admin: st.error("관리자 권한 필요"); st.stop()
-    advs = qdf("""SELECT code AS 코드, name AS 이름,
+    advs = pd.read_sql("""SELECT code AS 코드, name AS 이름,
                           COALESCE(total_budget,0) AS 총예산,
                           COALESCE(show_conversion,1) AS 전환표시,
                           COALESCE(show_creative,0) AS 소재표시,
                           created_at AS 생성일
-                          FROM advertisers ORDER BY created_at DESC""")
+                          FROM advertisers ORDER BY created_at DESC""", sqlite3.connect(DB))
     st.subheader(f"등록된 광고주 ({len(advs)}개)")
     advs_show = advs.copy()
     advs_show["총예산"] = advs_show["총예산"].apply(lambda x: f"₩{x:,.0f}")
@@ -1659,13 +1720,12 @@ elif page == "🏢 광고주 관리":
             else:
                 try:
                     adv_code_clean=new_code.strip().upper()
-                    q("INSERT INTO advertisers (code,name,total_budget,show_conversion,show_creative) VALUES (%s,%s,%s,%s,%s)",(adv_code_clean,new_name.strip(),float(new_budget),1 if new_show_conv else 0,1 if new_show_cre else 0),fetch=False)
-                    q("INSERT INTO permissions (email,advertiser_code,level) VALUES (%s,%s,%s) ON CONFLICT (email,advertiser_code) DO NOTHING",(user["email"],adv_code_clean,"OWNER"),fetch=False)
+                    q("""INSERT INTO advertisers (code,name,total_budget,show_conversion,show_creative) VALUES (?,?,?,?,?)""",(adv_code_clean,new_name.strip(),float(new_budget),1 if new_show_conv else 0,1 if new_show_cre else 0),fetch=False)
+                    q("INSERT OR IGNORE INTO permissions VALUES (?,?,?)",(user["email"],adv_code_clean,"OWNER"),fetch=False)
                     email,pw=create_viewer_account(adv_code_clean,new_name)
                     st.success(f"{new_name} 추가 완료\n뷰어 계정: {email}\n비밀번호: {pw}")
                     st.rerun()
-                except psycopg2.IntegrityError:
-                    st.error("이미 존재하는 코드입니다")
+                except sqlite3.IntegrityError: st.error("이미 존재하는 코드입니다")
     st.divider()
 
     st.subheader("✏️ 이름 / 예산 / 표시 옵션 편집")
@@ -1687,8 +1747,8 @@ elif page == "🏢 광고주 관리":
                 value=bool(cur_row["소재표시"]), key="edit_show_cre",
                 help="켜면 '구글_광고소재', '페이스북_광고소재' 탭이 활성화됩니다.")
         if st.button("변경 저장"):
-            q("""UPDATE advertisers SET name=%s, total_budget=%s, show_conversion=%s, show_creative=%s
-                 WHERE code=%s""",
+            q("""UPDATE advertisers SET name=?, total_budget=?, show_conversion=?, show_creative=?
+                 WHERE code=?""",
               (new_name2, float(new_budget2),
                1 if new_show2 else 0, 1 if new_show_cre2 else 0, edit_code), fetch=False)
             st.success("변경됨"); st.rerun()
@@ -1702,8 +1762,8 @@ elif page == "🏢 광고주 관리":
         if st.button("영구 삭제"):
             if confirm == del_code:
                 for tbl in ["perf","upload_log","conversion_mapping","permissions"]:
-                    q(f"DELETE FROM {tbl} WHERE advertiser_code=%s", (del_code,), fetch=False)
-                q("DELETE FROM advertisers WHERE code=%s", (del_code,), fetch=False)
+                    q(f"DELETE FROM {tbl} WHERE advertiser_code=?", (del_code,), fetch=False)
+                q("DELETE FROM advertisers WHERE code=?", (del_code,), fetch=False)
                 st.success("삭제됨"); st.rerun()
             else: st.error("코드 불일치")
 
@@ -1714,16 +1774,14 @@ elif page == "👤 계정 관리":
         st.error("관리자만 접근 가능합니다"); st.stop()
 
     # ===== 계정 목록 =====
-    rows = q("""
+    users_df = pd.read_sql("""
     SELECT u.email,u.name,u.role,
-       STRING_AGG(p.advertiser_code, ',') AS advertisers
+           GROUP_CONCAT(p.advertiser_code) AS advertisers
     FROM users u
     LEFT JOIN permissions p ON u.email=p.email
-    GROUP BY u.email,u.name,u.role
+    GROUP BY u.email
     ORDER BY u.email
-    """)
-
-    users_df = pd.DataFrame(rows, columns=["email","name","role","advertisers"])
+    """, sqlite3.connect(DB))
 
     st.subheader("📋 계정 목록")
     st.dataframe(users_df, use_container_width=True, hide_index=True)
@@ -1747,11 +1805,11 @@ elif page == "👤 계정 관리":
             st.error("이메일/비밀번호 입력 필요")
         else:
             try:
-                q("INSERT INTO users VALUES (%s,%s,%s,%s)",
+                q("INSERT INTO users VALUES (?,?,?,?)",
                   (new_email,new_name,new_role,new_pw), fetch=False)
 
                 for adv in sel_advs:
-                    q("INSERT INTO permissions VALUES (%s,%s,%s)",
+                    q("INSERT INTO permissions VALUES (?,?,?)",
                       (new_email,adv,new_role), fetch=False)
 
                 st.success("계정 생성 완료"); st.rerun()
@@ -1783,17 +1841,17 @@ elif page == "👤 계정 관리":
     edit_advs = st.multiselect("광고주", adv_options, default=cur_advs)
 
     if st.button("수정 저장"):
-        q("UPDATE users SET name=%s,role=%s WHERE email=%s",
+        q("UPDATE users SET name=?,role=? WHERE email=?",
           (edit_name,edit_role,sel_user), fetch=False)
 
         if new_pw2:
-            q("UPDATE users SET password=%s WHERE email=%s",
+            q("UPDATE users SET password=? WHERE email=?",
               (new_pw2,sel_user), fetch=False)
 
-        q("DELETE FROM permissions WHERE email=%s", (sel_user,), fetch=False)
+        q("DELETE FROM permissions WHERE email=?", (sel_user,), fetch=False)
 
         for adv in edit_advs:
-            q("INSERT INTO permissions VALUES (%s,%s,%s)",
+            q("INSERT INTO permissions VALUES (?,?,?)",
               (sel_user,adv,edit_role), fetch=False)
 
         st.success("수정 완료"); st.rerun()
@@ -1806,6 +1864,6 @@ elif page == "👤 계정 관리":
     del_user = st.selectbox("삭제할 계정", users_df["email"], key="del_user")
 
     if st.button("삭제"):
-        q("DELETE FROM permissions WHERE email=%s", (del_user,), fetch=False)
-        q("DELETE FROM users WHERE email=%s", (del_user,), fetch=False)
+        q("DELETE FROM permissions WHERE email=?", (del_user,), fetch=False)
+        q("DELETE FROM users WHERE email=?", (del_user,), fetch=False)
         st.success("삭제 완료"); st.rerun()
