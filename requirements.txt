@@ -4,4 +4,4 @@ openpyxl
 plotly
 reportlab
 kaleido==0.2.1
-psycopg2-binary
+
