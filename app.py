@@ -1280,13 +1280,13 @@ elif page == "📤 데이터 업로드" and adv_code:
                         r2 = con.execute(text("""
                             INSERT INTO upload_log
                                 (email, advertiser_code, platform, file_name, rows,
-                                 uploaded_at, upload_mode, deleted_rows)
-                            VALUES (:email,:adv,:pf,:fn,:rows,:ts,:mode,:del)
+                                uploaded_at, upload_mode, deleted_rows)
+                            VALUES (:email,:adv,:pf,:fn,:rows,:ts,:mode,:deleted_rows)
                             RETURNING id
                         """), dict(email=user["email"], adv=adv_code, pf=platform,
                                    fn=file.name, rows=len(df),
                                    ts=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                   mode=mode, del_=deleted))
+                                   mode=mode, deleted_rows=deleted))
                         upload_id = r2.fetchone()[0]
 
                         rows_to_insert = []
