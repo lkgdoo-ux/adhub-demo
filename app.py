@@ -555,38 +555,49 @@ def render_kpi(df, total_budget=0, show_conversion=True, key_suffix=""):
     conv_label = "/".join(labels) if labels else "CPA"
 
     if total_budget > 0:
-        col_d, col_m = st.columns([1, 2])
-        with col_d:
-            st.plotly_chart(
-                render_budget_donut(tot_cost, total_budget),
-                use_container_width=True,
-                key=f"budget_donut_{key_suffix}_{tot_cost}_{total_budget}")
-        with col_m:
-            r1 = st.columns(3)
-            r1[0].metric("총 예산",    f"₩{total_budget:,.0f}")
-            r1[1].metric("소진 광고비", f"₩{tot_cost:,.0f}")
-            r1[2].metric("잔여 예산",  f"₩{max(total_budget - tot_cost, 0):,.0f}")
+        # ── 좌/우 2분할 ──────────────────────────────────────────
+        col_left, col_right = st.columns(2)
+
+        # ── 왼쪽: 예산 현황 ──────────────────────────────────────
+        with col_left:
+            st.markdown("#### 예산 현황")
+            col_donut, col_budget = st.columns([1, 1])
+            with col_donut:
+                st.plotly_chart(
+                    render_budget_donut(tot_cost, total_budget),
+                    use_container_width=True,
+                    key=f"budget_donut_{key_suffix}_{tot_cost}_{total_budget}")
+            with col_budget:
+                st.metric("총 예산",    f"₩{total_budget:,.0f}")
+                st.metric("소진 광고비", f"₩{tot_cost:,.0f}")
+                st.metric("잔여 예산",  f"₩{max(total_budget - tot_cost, 0):,.0f}")
+
+        # ── 오른쪽: 주요 지표 ────────────────────────────────────
+        with col_right:
+            st.markdown("#### 주요 지표")
             if show_conversion:
-                r2 = st.columns(3)
-                r2[0].metric("노출", f"{tot_imp:,}")
-                r2[1].metric("클릭", f"{tot_clk:,}")
-                r2[2].metric(f"전환 ({conv_label})", f"{tot_conv:,.0f}")
-            else:
+                r1 = st.columns(2)
+                r1[0].metric("노출", f"{tot_imp:,}")
+                r1[1].metric("클릭", f"{tot_clk:,}")
                 r2 = st.columns(2)
-                r2[0].metric("노출", f"{tot_imp:,}")
-                r2[1].metric("클릭", f"{tot_clk:,}")
-        if show_conversion:
-            r3 = st.columns(4)
-            r3[0].metric("CTR", f"{ctr:.2f}%")
-            r3[1].metric("CPM", f"₩{cpm:,.0f}")
-            r3[2].metric("CPC", f"₩{cpc:,.0f}")
-            r3[3].metric(conv_label, f"₩{cpa:,.0f}" if tot_conv else "—")
-        else:
-            r3 = st.columns(3)
-            r3[0].metric("CTR", f"{ctr:.2f}%")
-            r3[1].metric("CPM", f"₩{cpm:,.0f}")
-            r3[2].metric("CPC", f"₩{cpc:,.0f}")
+                r2[0].metric(f"전환 ({conv_label})", f"{tot_conv:,.0f}")
+                r2[1].metric("CTR", f"{ctr:.2f}%")
+                r3 = st.columns(2)
+                r3[0].metric("CPM", f"₩{cpm:,.0f}")
+                r3[1].metric("CPC", f"₩{cpc:,.0f}")
+                if tot_conv:
+                    st.metric(conv_label, f"₩{cpa:,.0f}")
+            else:
+                r1 = st.columns(2)
+                r1[0].metric("노출", f"{tot_imp:,}")
+                r1[1].metric("클릭", f"{tot_clk:,}")
+                r2 = st.columns(3)
+                r2[0].metric("CTR", f"{ctr:.2f}%")
+                r2[1].metric("CPM", f"₩{cpm:,.0f}")
+                r2[2].metric("CPC", f"₩{cpc:,.0f}")
+
     else:
+        # total_budget 없을 때 기존 로직 유지
         if show_conversion:
             c = st.columns(4)
             c[0].metric("광고비", f"₩{tot_cost:,.0f}")
@@ -607,6 +618,7 @@ def render_kpi(df, total_budget=0, show_conversion=True, key_suffix=""):
             c2[0].metric("CTR", f"{ctr:.2f}%")
             c2[1].metric("CPM", f"₩{cpm:,.0f}")
             c2[2].metric("CPC", f"₩{cpc:,.0f}")
+
     return conv_label
 
 def _add_metric_cols(g, conv_label, show_conversion=True):
