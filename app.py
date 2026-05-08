@@ -617,124 +617,7 @@ def _add_metric_cols(g, conv_label, show_conversion=True):
         g["전환"] = g["conversions"].astype(int)
     return g
 
-# ============ 캠페인 테이블 ============
-def render_campaign_table(df, conv_label, key, show_conversion=True):
-    unit = st.radio("집계 단위", ["캠페인 합계","일자별"], horizontal=True, key=f"{key}_unit")
-    base_cols   = ["노출","클릭","광고비"]
-    metric_cols = ["CTR (%)","CPM (₩)","CPC (₩)"]
-    if show_conversion:
-        base_cols.append("전환")
-        metric_cols.append(f"{conv_label} (₩)")
-
-    if unit == "캠페인 합계":
-        g = df.groupby("campaign", as_index=False).agg(
-            impressions=("impressions","sum"), clicks=("clicks","sum"),
-            cost=("cost","sum"), conversions=("conversions","sum"))
-        g = _add_metric_cols(g, conv_label, show_conversion)
-        show = g[["campaign"] + base_cols + metric_cols]
-        show = show.rename(columns={"campaign":"캠페인"}).sort_values("광고비", ascending=False)
-    else:
-        g = df.groupby(["date","campaign"], as_index=False).agg(
-            impressions=("impressions","sum"), clicks=("clicks","sum"),
-            cost=("cost","sum"), conversions=("conversions","sum"))
-        g = _add_metric_cols(g, conv_label, show_conversion)
-        g["일자"] = pd.to_datetime(g["date"]).dt.strftime("%Y-%m-%d")
-        show = g[["일자","campaign"] + base_cols + metric_cols]
-        show = show.rename(columns={"campaign":"캠페인"}).sort_values(
-            ["일자","광고비"], ascending=[True, False])
-
-    show = show.copy()
-    for col in show.columns:
-        if col in ["노출","클릭","전환"]:
-            show[col] = show[col].apply(lambda x: f"{int(x):,}")
-        elif col == "광고비" or "(₩)" in col:
-            show[col] = show[col].apply(lambda x: f"₩{int(x):,}")
-
-    total_row = {"캠페인": "🔢 Total"}
-    if unit == "일자별":
-        total_row["일자"] = ""
-    raw_g = df.groupby("campaign" if unit == "캠페인 합계" else ["date","campaign"], as_index=False).agg(
-        impressions=("impressions","sum"), clicks=("clicks","sum"),
-        cost=("cost","sum"), conversions=("conversions","sum"))
-    tot_imp  = int(raw_g["impressions"].sum())
-    tot_clk  = int(raw_g["clicks"].sum())
-    tot_cost = float(raw_g["cost"].sum())
-    tot_conv = float(raw_g["conversions"].sum())
-
-    total_row["노출"]   = f"{tot_imp:,}"
-    total_row["클릭"]   = f"{tot_clk:,}"
-    total_row["광고비"] = f"₩{int(tot_cost):,}"
-    total_row["CTR (%)"] = f"{safe_div(tot_clk, tot_imp)*100:.2f}"
-    total_row["CPM (₩)"] = f"₩{int(safe_div(tot_cost, tot_imp)*1000):,}"
-    total_row["CPC (₩)"] = f"₩{int(safe_div(tot_cost, tot_clk)):,}"
-    if show_conversion:
-        total_row["전환"] = f"{int(tot_conv):,}"
-        total_row[f"{conv_label} (₩)"] = f"₩{int(safe_div(tot_cost, tot_conv)):,}" if tot_conv else "—"
-
-    total_df = pd.DataFrame([total_row])
-    total_df = total_df[[c for c in show.columns if c in total_df.columns]]
-
-    st.dataframe(total_df, use_container_width=True, hide_index=True)
-    st.dataframe(show, use_container_width=True, hide_index=True)
-
-# ============ 광고그룹 테이블 ============
-def render_adgroup_table(df, conv_label, key, show_conversion=True):
-    unit = st.radio("집계 단위", ["광고그룹 합계","일자별"], horizontal=True, key=f"{key}_unit")
-    base_cols   = ["노출","클릭","광고비"]
-    metric_cols = ["CTR (%)","CPM (₩)","CPC (₩)"]
-    if show_conversion:
-        base_cols.append("전환")
-        metric_cols.append(f"{conv_label} (₩)")
-
-    if unit == "광고그룹 합계":
-        g = df.groupby("adgroup", as_index=False).agg(
-            impressions=("impressions","sum"), clicks=("clicks","sum"),
-            cost=("cost","sum"), conversions=("conversions","sum"))
-        g = _add_metric_cols(g, conv_label, show_conversion)
-        show = g[["adgroup"] + base_cols + metric_cols]
-        show = show.rename(columns={"adgroup":"광고그룹"}).sort_values("광고비", ascending=False)
-    else:
-        g = df.groupby(["date","adgroup"], as_index=False).agg(
-            impressions=("impressions","sum"), clicks=("clicks","sum"),
-            cost=("cost","sum"), conversions=("conversions","sum"))
-        g = _add_metric_cols(g, conv_label, show_conversion)
-        g["일자"] = pd.to_datetime(g["date"]).dt.strftime("%Y-%m-%d")
-        show = g[["일자","adgroup"] + base_cols + metric_cols]
-        show = show.rename(columns={"adgroup":"광고그룹"}).sort_values(
-            ["일자","광고비"], ascending=[True, False])
-
-    show = show.copy()
-    for col in show.columns:
-        if col in ["노출","클릭","전환"]:
-            show[col] = show[col].apply(lambda x: f"{int(x):,}")
-        elif col == "광고비" or "(₩)" in col:
-            show[col] = show[col].apply(lambda x: f"₩{int(x):,}")
-
-    tot_imp  = int(df["impressions"].sum())
-    tot_clk  = int(df["clicks"].sum())
-    tot_cost = float(df["cost"].sum())
-    tot_conv = float(df["conversions"].sum())
-
-    total_row = {"광고그룹": "🔢 Total"}
-    if unit == "일자별":
-        total_row["일자"] = ""
-    total_row["노출"]    = f"{tot_imp:,}"
-    total_row["클릭"]    = f"{tot_clk:,}"
-    total_row["광고비"]  = f"₩{int(tot_cost):,}"
-    total_row["CTR (%)"] = f"{safe_div(tot_clk, tot_imp)*100:.2f}"
-    total_row["CPM (₩)"] = f"₩{int(safe_div(tot_cost, tot_imp)*1000):,}"
-    total_row["CPC (₩)"] = f"₩{int(safe_div(tot_cost, tot_clk)):,}"
-    if show_conversion:
-        total_row["전환"] = f"{int(tot_conv):,}"
-        total_row[f"{conv_label} (₩)"] = f"₩{int(safe_div(tot_cost, tot_conv)):,}" if tot_conv else "—"
-
-    total_df = pd.DataFrame([total_row])
-    total_df = total_df[[c for c in show.columns if c in total_df.columns]]
-
-    st.dataframe(total_df, use_container_width=True, hide_index=True)
-    st.dataframe(show, use_container_width=True, hide_index=True)
-
-# ============ 퍼널 분석 ============
+# ============ 퍼널 관련 헬퍼 ============
 def get_raw_data_columns(adv_code, platform):
     rows = q("""
         SELECT raw_data FROM perf
@@ -773,88 +656,321 @@ def save_funnel_steps(adv_code, platform, steps):
             VALUES (?,?,?,?,?,?)
         """, (adv_code, platform, i, s["column"], s["label"], s["cvr_base"]), fetch=False)
 
-def render_funnel_table(df, funnel_steps, group_by="overall", key=""):
-    if df.empty:
-        st.info("데이터가 없습니다.")
-        return
-    if not funnel_steps:
-        st.info("설정된 퍼널 단계가 없습니다.")
-        return
-
+# ============ 퍼널 컬럼 추가 헬퍼 ============
+def _add_funnel_cols_to_df(df, funnel_steps):
+    """raw_data에서 퍼널 단계별 수치를 파싱해서 df에 컬럼으로 추가"""
+    if not funnel_steps or df.empty:
+        return df
     df = df.copy()
     parsed = df["raw_data"].fillna("{}").apply(
         lambda x: json.loads(x) if isinstance(x, str) and x else {})
-
     sorted_steps = sorted(funnel_steps, key=lambda x: x["order"])
     for step in sorted_steps:
         col = step["column"]
-        df[f"_s{step['order']}"] = parsed.apply(lambda d, c=col: float(d.get(c, 0) or 0))
+        df[f"_funnel_{step['order']}"] = parsed.apply(
+            lambda d, c=col: float(d.get(c, 0) or 0))
+    return df
 
-    if group_by == "campaign":
-        df["_grp"] = df["campaign"]
-        grp_label = "캠페인"
-    elif group_by == "adgroup":
-        df["_grp"] = df["campaign"].astype(str) + " > " + df["adgroup"].astype(str)
-        grp_label = "캠페인 > 광고그룹"
-    elif group_by == "creative":
-        df = df[df["creative"].notna() & (df["creative"] != "") & (df["creative"] != "None")]
-        if df.empty:
-            st.info("소재 데이터가 없습니다.")
-            return
-        df["_grp"] = df["creative"]
-        grp_label = "소재"
-    else:
-        df["_grp"] = "전체"
-        grp_label = "구분"
-
-    agg = {"impressions": "sum", "clicks": "sum", "cost": "sum"}
+def _build_funnel_agg_cols(g, funnel_steps):
+    """집계된 df에 퍼널 단계 수치를 합산 컬럼으로 추가 (이미 _funnel_N 컬럼이 있어야 함)"""
+    result = g.copy()
+    sorted_steps = sorted(funnel_steps, key=lambda x: x["order"])
     for step in sorted_steps:
-        agg[f"_s{step['order']}"] = "sum"
-    g = df.groupby("_grp", as_index=False).agg(agg).sort_values("cost", ascending=False)
+        k = f"_funnel_{step['order']}"
+        if k in result.columns:
+            result[step["label"]] = result[k].astype(int)
+    return result
 
-    def build_out_row(row_series, label_val):
-        row = {grp_label: label_val}
-        row["Imp"]   = f"{int(row_series['impressions']):,}"
-        row["Click"] = f"{int(row_series['clicks']):,}"
-        imp_val = row_series["impressions"] if row_series["impressions"] > 0 else 1
-        clk_val = row_series["clicks"] if row_series["clicks"] > 0 else 1
-        row["CTR"]   = f"{row_series['clicks'] / imp_val * 100:.2f}%"
-        row["CPC"]   = f"₩{int(row_series['cost'] / clk_val):,}"
-        row["COST"]  = f"₩{int(row_series['cost']):,}"
-        for i, step in enumerate(sorted_steps):
-            scol  = f"_s{step['order']}"
-            label = step["label"]
-            cvr_base = step.get("cvr_base", "clicks")
-            cnt = row_series[scol]
-            row[label] = f"{int(cnt):,}"
-            cpa_val = int(row_series["cost"] / cnt) if cnt > 0 else None
-            row[f"CPA·{label}"] = f"₩{cpa_val:,}" if cpa_val is not None else "—"
-            if cvr_base == "previous" and i > 0:
-                prev = sorted_steps[i - 1]
-                base_val = row_series[f"_s{prev['order']}"]
-                cvr_label = f"CVR·{label}(↑{prev['label']}대비)"
-            else:
-                base_val = row_series["clicks"]
-                cvr_label = f"CVR·{label}"
-            row[cvr_label] = f"{row_series[scol] / base_val * 100:.2f}%" if base_val > 0 else "—"
-        return row
+def _add_funnel_rate_cols(g, funnel_steps):
+    """퍼널 CVR / CPA 컬럼 추가"""
+    sorted_steps = sorted(funnel_steps, key=lambda x: x["order"])
+    for i, step in enumerate(sorted_steps):
+        label = step["label"]
+        cvr_base = step.get("cvr_base", "clicks")
+        cnt_col = label  # 이미 숫자 컬럼으로 존재
+        if cvr_base == "previous" and i > 0:
+            prev_label = sorted_steps[i-1]["label"]
+            g[f"CVR·{label}"] = g.apply(
+                lambda r, cl=cnt_col, pl=prev_label:
+                    f"{safe_div(r[cl], r[pl])*100:.1f}%" if r[pl] > 0 else "—", axis=1)
+        else:
+            g[f"CVR·{label}"] = g.apply(
+                lambda r, cl=cnt_col:
+                    f"{safe_div(r[cl], r['clicks'])*100:.1f}%" if r["clicks"] > 0 else "—", axis=1)
+        g[f"CPA·{label}"] = g.apply(
+            lambda r, cl=cnt_col:
+                f"₩{int(safe_div(r['cost'], r[cl])):,}" if r[cl] > 0 else "—", axis=1)
+    return g
 
-    total_series = g[[c for c in g.columns if c != "_grp"]].sum()
-    total_row_data = build_out_row(total_series, "🔢 Total")
-    total_df = pd.DataFrame([total_row_data])
+def _format_display_df(show, base_cols_plain, conv_label, show_conversion, funnel_steps=None):
+    """숫자 포맷팅 적용"""
+    show = show.copy()
+    for col in show.columns:
+        if col in base_cols_plain:  # 노출, 클릭, 전환 등 정수형
+            show[col] = show[col].apply(lambda x: f"{int(x):,}" if pd.notna(x) else "—")
+        elif col == "광고비" or ("(₩)" in col and "CVR" not in col and "CPA·" not in col):
+            show[col] = show[col].apply(lambda x: f"₩{int(x):,}" if pd.notna(x) else "—")
+    return show
 
-    rows = []
-    for _, row_s in g.iterrows():
-        rows.append(build_out_row(row_s, row_s["_grp"]))
-    out = pd.DataFrame(rows)
+# ============ 캠페인 테이블 (퍼널 통합) ============
+def render_campaign_table(df, conv_label, key, show_conversion=True, funnel_steps=None):
+    unit = st.radio("집계 단위", ["캠페인 합계","일자별"], horizontal=True, key=f"{key}_unit")
+    base_cols   = ["노출","클릭","광고비"]
+    metric_cols = ["CTR (%)","CPM (₩)","CPC (₩)"]
+    if show_conversion:
+        base_cols.append("전환")
+        metric_cols.append(f"{conv_label} (₩)")
+
+    # 퍼널 컬럼 준비
+    df_f = _add_funnel_cols_to_df(df, funnel_steps) if funnel_steps else df
+
+    if unit == "캠페인 합계":
+        agg_dict = dict(impressions=("impressions","sum"), clicks=("clicks","sum"),
+                        cost=("cost","sum"), conversions=("conversions","sum"))
+        if funnel_steps:
+            for step in funnel_steps:
+                k = f"_funnel_{step['order']}"
+                if k in df_f.columns:
+                    agg_dict[k] = (k, "sum")
+        g = df_f.groupby("campaign", as_index=False).agg(**agg_dict)
+        g = _add_metric_cols(g, conv_label, show_conversion)
+        if funnel_steps:
+            g = _build_funnel_agg_cols(g, funnel_steps)
+            g = _add_funnel_rate_cols(g, funnel_steps)
+        show = g[["campaign"] + base_cols + metric_cols +
+                 ([s["label"] for s in sorted(funnel_steps, key=lambda x: x["order"])] +
+                  [f"CVR·{s['label']}" for s in sorted(funnel_steps, key=lambda x: x["order"])] +
+                  [f"CPA·{s['label']}" for s in sorted(funnel_steps, key=lambda x: x["order"])]
+                  if funnel_steps else [])]
+        show = show.rename(columns={"campaign":"캠페인"}).sort_values("광고비", ascending=False)
+    else:
+        agg_dict = dict(impressions=("impressions","sum"), clicks=("clicks","sum"),
+                        cost=("cost","sum"), conversions=("conversions","sum"))
+        if funnel_steps:
+            for step in funnel_steps:
+                k = f"_funnel_{step['order']}"
+                if k in df_f.columns:
+                    agg_dict[k] = (k, "sum")
+        g = df_f.groupby(["date","campaign"], as_index=False).agg(**agg_dict)
+        g = _add_metric_cols(g, conv_label, show_conversion)
+        if funnel_steps:
+            g = _build_funnel_agg_cols(g, funnel_steps)
+            g = _add_funnel_rate_cols(g, funnel_steps)
+        g["일자"] = pd.to_datetime(g["date"]).dt.strftime("%Y-%m-%d")
+        show = g[["일자","campaign"] + base_cols + metric_cols +
+                 ([s["label"] for s in sorted(funnel_steps, key=lambda x: x["order"])] +
+                  [f"CVR·{s['label']}" for s in sorted(funnel_steps, key=lambda x: x["order"])] +
+                  [f"CPA·{s['label']}" for s in sorted(funnel_steps, key=lambda x: x["order"])]
+                  if funnel_steps else [])]
+        show = show.rename(columns={"campaign":"캠페인"}).sort_values(
+            ["일자","광고비"], ascending=[True, False])
+
+    # 숫자 포맷팅
+    show = show.copy()
+    funnel_labels = [s["label"] for s in funnel_steps] if funnel_steps else []
+    plain_int_cols = ["노출","클릭"] + (["전환"] if show_conversion else []) + funnel_labels
+    for col in show.columns:
+        if col in plain_int_cols:
+            show[col] = show[col].apply(lambda x: f"{int(x):,}" if pd.notna(x) else "—")
+        elif col == "광고비" or ("(₩)" in col):
+            show[col] = show[col].apply(lambda x: f"₩{int(x):,}" if pd.notna(x) else "—")
+
+    # Total 행
+    total_row = {"캠페인": "🔢 Total"}
+    if unit == "일자별":
+        total_row["일자"] = ""
+    raw_g = df_f.groupby("campaign" if unit == "캠페인 합계" else ["date","campaign"],
+                          as_index=False).agg(
+        impressions=("impressions","sum"), clicks=("clicks","sum"),
+        cost=("cost","sum"), conversions=("conversions","sum"))
+    tot_imp  = int(raw_g["impressions"].sum())
+    tot_clk  = int(raw_g["clicks"].sum())
+    tot_cost = float(raw_g["cost"].sum())
+    tot_conv = float(raw_g["conversions"].sum())
+
+    total_row["노출"]    = f"{tot_imp:,}"
+    total_row["클릭"]    = f"{tot_clk:,}"
+    total_row["광고비"]  = f"₩{int(tot_cost):,}"
+    total_row["CTR (%)"] = f"{safe_div(tot_clk, tot_imp)*100:.2f}"
+    total_row["CPM (₩)"] = f"₩{int(safe_div(tot_cost, tot_imp)*1000):,}"
+    total_row["CPC (₩)"] = f"₩{int(safe_div(tot_cost, tot_clk)):,}"
+    if show_conversion:
+        total_row["전환"] = f"{int(tot_conv):,}"
+        total_row[f"{conv_label} (₩)"] = f"₩{int(safe_div(tot_cost, tot_conv)):,}" if tot_conv else "—"
+    if funnel_steps:
+        for step in sorted(funnel_steps, key=lambda x: x["order"]):
+            k = f"_funnel_{step['order']}"
+            tot_s = float(df_f[k].sum()) if k in df_f.columns else 0
+            total_row[step["label"]] = f"{int(tot_s):,}"
+            total_row[f"CVR·{step['label']}"] = f"{safe_div(tot_s, tot_clk)*100:.1f}%" if tot_clk else "—"
+            total_row[f"CPA·{step['label']}"] = f"₩{int(safe_div(tot_cost, tot_s)):,}" if tot_s else "—"
+
+    total_df = pd.DataFrame([total_row])
+    total_df = total_df[[c for c in show.columns if c in total_df.columns]]
 
     st.dataframe(total_df, use_container_width=True, hide_index=True)
-    st.dataframe(out, use_container_width=True, hide_index=True)
+    st.dataframe(show, use_container_width=True, hide_index=True)
 
-    csv_bytes = pd.concat([total_df, out], ignore_index=True).to_csv(index=False).encode("utf-8-sig")
+    # CSV 다운로드
+    csv_bytes = pd.concat([total_df, show], ignore_index=True).to_csv(index=False).encode("utf-8-sig")
     st.download_button("📥 CSV 다운로드", data=csv_bytes,
-                       file_name=f"funnel_{key}_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                       mime="text/csv", key=f"{key}_dl")
+                       file_name=f"campaign_{key}_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                       mime="text/csv", key=f"{key}_camp_dl")
+
+
+# ============ 광고그룹 테이블 (퍼널 통합 + 일자별 드릴다운) ============
+def render_adgroup_table(df, conv_label, key, show_conversion=True, funnel_steps=None):
+    """
+    집계 단위:
+      - 광고그룹 합계: 광고그룹별 집계
+      - 일자별: 광고그룹 > 일자 드릴다운 (expander로 펼치기)
+    """
+    unit = st.radio("집계 단위", ["광고그룹 합계","일자별"], horizontal=True, key=f"{key}_unit")
+    base_cols   = ["노출","클릭","광고비"]
+    metric_cols = ["CTR (%)","CPM (₩)","CPC (₩)"]
+    if show_conversion:
+        base_cols.append("전환")
+        metric_cols.append(f"{conv_label} (₩)")
+
+    funnel_labels = [s["label"] for s in sorted(funnel_steps, key=lambda x: x["order"])] if funnel_steps else []
+    funnel_cvr_cols = [f"CVR·{s['label']}" for s in sorted(funnel_steps, key=lambda x: x["order"])] if funnel_steps else []
+    funnel_cpa_cols = [f"CPA·{s['label']}" for s in sorted(funnel_steps, key=lambda x: x["order"])] if funnel_steps else []
+    extra_cols = funnel_labels + funnel_cvr_cols + funnel_cpa_cols
+
+    # 퍼널 컬럼 준비
+    df_f = _add_funnel_cols_to_df(df, funnel_steps) if funnel_steps else df.copy()
+
+    def _make_agg_dict(df_src):
+        agg_dict = dict(impressions=("impressions","sum"), clicks=("clicks","sum"),
+                        cost=("cost","sum"), conversions=("conversions","sum"))
+        if funnel_steps:
+            for step in funnel_steps:
+                k = f"_funnel_{step['order']}"
+                if k in df_src.columns:
+                    agg_dict[k] = (k, "sum")
+        return agg_dict
+
+    def _format_row_df(g_raw, id_cols):
+        g = _add_metric_cols(g_raw, conv_label, show_conversion)
+        if funnel_steps:
+            g = _build_funnel_agg_cols(g, funnel_steps)
+            g = _add_funnel_rate_cols(g, funnel_steps)
+        show_cols = id_cols + base_cols + metric_cols + extra_cols
+        show_cols = [c for c in show_cols if c in g.columns]
+        out = g[show_cols].copy()
+        plain_int = ["노출","클릭"] + (["전환"] if show_conversion else []) + funnel_labels
+        for col in out.columns:
+            if col in plain_int:
+                out[col] = out[col].apply(lambda x: f"{int(x):,}")
+            elif col == "광고비" or ("(₩)" in col):
+                out[col] = out[col].apply(lambda x: f"₩{int(x):,}" if pd.notna(x) else "—")
+        return out
+
+    def _make_total_row(df_src, id_val_dict):
+        tot_imp  = int(df_src["impressions"].sum())
+        tot_clk  = int(df_src["clicks"].sum())
+        tot_cost = float(df_src["cost"].sum())
+        tot_conv = float(df_src["conversions"].sum()) if "conversions" in df_src.columns else 0
+        row = dict(id_val_dict)
+        row["노출"]    = f"{tot_imp:,}"
+        row["클릭"]    = f"{tot_clk:,}"
+        row["광고비"]  = f"₩{int(tot_cost):,}"
+        row["CTR (%)"] = f"{safe_div(tot_clk, tot_imp)*100:.2f}"
+        row["CPM (₩)"] = f"₩{int(safe_div(tot_cost, tot_imp)*1000):,}"
+        row["CPC (₩)"] = f"₩{int(safe_div(tot_cost, tot_clk)):,}"
+        if show_conversion:
+            row["전환"] = f"{int(tot_conv):,}"
+            row[f"{conv_label} (₩)"] = f"₩{int(safe_div(tot_cost, tot_conv)):,}" if tot_conv else "—"
+        if funnel_steps:
+            for step in sorted(funnel_steps, key=lambda x: x["order"]):
+                k = f"_funnel_{step['order']}"
+                tot_s = float(df_f[k].sum()) if k in df_f.columns else 0
+                row[step["label"]] = f"{int(tot_s):,}"
+                row[f"CVR·{step['label']}"] = f"{safe_div(tot_s, tot_clk)*100:.1f}%" if tot_clk else "—"
+                row[f"CPA·{step['label']}"] = f"₩{int(safe_div(tot_cost, tot_s)):,}" if tot_s else "—"
+        return row
+
+    # ── 광고그룹 합계 모드 ──────────────────────────────────
+    if unit == "광고그룹 합계":
+        agg_dict = _make_agg_dict(df_f)
+        g = df_f.groupby("adgroup", as_index=False).agg(**agg_dict)
+        out = _format_row_df(g, ["adgroup"])
+        out = out.rename(columns={"adgroup":"광고그룹"}).sort_values("광고비", ascending=False)
+
+        total_row = _make_total_row(df_f, {"광고그룹": "🔢 Total"})
+        total_df  = pd.DataFrame([total_row])
+        total_df  = total_df[[c for c in out.columns if c in total_df.columns]]
+        st.dataframe(total_df, use_container_width=True, hide_index=True)
+        st.dataframe(out, use_container_width=True, hide_index=True)
+
+    # ── 일자별 드릴다운 모드 ────────────────────────────────
+    else:
+        # 광고그룹 전체 합계 (최상단)
+        total_row = _make_total_row(df_f, {"광고그룹": "🔢 Total", "일자": ""})
+        total_df  = pd.DataFrame([total_row])
+
+        # 광고그룹별 집계 (expander 제목용)
+        agg_dict = _make_agg_dict(df_f)
+        g_ag = df_f.groupby("adgroup", as_index=False).agg(**agg_dict)
+        g_ag = g_ag.sort_values("cost", ascending=False)
+
+        # 전체 Total 먼저 표시
+        st.dataframe(total_df[[c for c in (
+            ["광고그룹","일자"] + base_cols + metric_cols + extra_cols)
+            if c in total_df.columns]], use_container_width=True, hide_index=True)
+
+        # 광고그룹별 expander 안에 일자별 데이터
+        for _, ag_row in g_ag.iterrows():
+            ag_name = ag_row["adgroup"]
+            ag_cost = float(ag_row["cost"])
+            ag_imp  = int(ag_row["impressions"])
+            df_ag   = df_f[df_f["adgroup"] == ag_name]
+
+            with st.expander(
+                f"📂 {ag_name}  (광고비 ₩{ag_cost:,.0f} · 노출 {ag_imp:,})",
+                expanded=False
+            ):
+                # 광고그룹 소계 행
+                ag_total_row = _make_total_row(
+                    df_ag, {"광고그룹": f"↳ {ag_name} 합계", "일자": ""})
+                ag_total_df = pd.DataFrame([ag_total_row])
+
+                # 일자별 집계
+                agg_dict2 = _make_agg_dict(df_ag)
+                g_date = df_ag.groupby("date", as_index=False).agg(**agg_dict2)
+                g_date["일자"] = pd.to_datetime(g_date["date"]).dt.strftime("%Y-%m-%d")
+                g_date["광고그룹"] = ag_name
+                out_date = _format_row_df(g_date, ["일자","광고그룹"])
+                out_date = out_date.drop(columns=["광고그룹"], errors="ignore")
+                out_date = out_date.sort_values("일자", ascending=True)
+
+                show_cols_exp = ["일자"] + base_cols + metric_cols + extra_cols
+                show_cols_exp = [c for c in show_cols_exp if c in out_date.columns]
+
+                all_cols_total = ["광고그룹","일자"] + base_cols + metric_cols + extra_cols
+                ag_total_df = ag_total_df[[c for c in all_cols_total if c in ag_total_df.columns]]
+
+                st.dataframe(ag_total_df, use_container_width=True, hide_index=True)
+                st.dataframe(out_date[show_cols_exp], use_container_width=True, hide_index=True)
+
+                # 일자별 CSV 다운로드
+                csv_bytes = pd.concat(
+                    [ag_total_df[[c for c in show_cols_exp if c in ag_total_df.columns]],
+                     out_date[show_cols_exp]], ignore_index=True
+                ).to_csv(index=False).encode("utf-8-sig")
+                ag_safe = re.sub(r"[^\w]", "_", ag_name)[:30]
+                st.download_button(
+                    "📥 CSV", data=csv_bytes,
+                    file_name=f"adgroup_{ag_safe}_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                    mime="text/csv", key=f"{key}_ag_{ag_safe}_dl")
+
+    # 전체 CSV (합계 모드에서만)
+    if unit == "광고그룹 합계":
+        csv_bytes = out.to_csv(index=False).encode("utf-8-sig")
+        st.download_button("📥 CSV 다운로드", data=csv_bytes,
+                           file_name=f"adgroup_{key}_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                           mime="text/csv", key=f"{key}_ag_dl")
+
 
 # ============ 광고 소재 탭 ============
 def render_creative_tab(df_pf, platform, key_prefix, show_conv=True):
@@ -970,6 +1086,7 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True):
         fig.update_layout(height=400, hovermode="x unified", margin=dict(l=10, r=10, t=20, b=20))
         st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_daily_chart")
 
+
 # ============================================================
 # 페이지 라우팅
 # ============================================================
@@ -997,7 +1114,7 @@ if page == "📈 대시보드" and adv_code:
         total_budget = 0
         show_conv    = True
 
-    # ── 기간 필터: 버튼을 눌러야 조회 ──────────────────────
+    # ── 기간 필터 ──────────────────────────────────────────
     with st.form("dashboard_filter_form"):
         fc1, fc2 = st.columns([3, 1])
         with fc1:
@@ -1007,7 +1124,6 @@ if page == "📈 대시보드" and adv_code:
             st.markdown("<br>", unsafe_allow_html=True)
             submitted = st.form_submit_button("🔍 조회", type="primary", use_container_width=True)
 
-    # session_state에 적용된 기간 저장 (처음 진입 시 자동 조회)
     filter_key = f"dash_filter_{adv_code}"
     if submitted or filter_key not in st.session_state:
         st.session_state[filter_key] = date_range
@@ -1075,6 +1191,8 @@ if page == "📈 대시보드" and adv_code:
     if "google" in tabd:
         with tabd["google"]:
             df_g = df_all[df_all["platform"] == "GOOGLE"]
+            funnel_steps_g = get_funnel_steps(adv_code, "GOOGLE")
+
             conv_label = render_kpi(df_g, total_budget, show_conv, key_suffix="g")
             st.divider()
             cc1, cc2 = st.columns([2, 1])
@@ -1089,22 +1207,21 @@ if page == "📈 대시보드" and adv_code:
                 st.plotly_chart(fig, use_container_width=True, key="g_camp_pie")
             st.divider()
             st.subheader("📋 캠페인별 성과")
-            render_campaign_table(df_g, conv_label, key="g_camp", show_conversion=show_conv)
+            if funnel_steps_g:
+                st.caption(f"🪜 퍼널 포함: {' → '.join([s['label'] for s in sorted(funnel_steps_g, key=lambda x: x['order'])])}")
+            render_campaign_table(df_g, conv_label, key="g_camp",
+                                  show_conversion=show_conv, funnel_steps=funnel_steps_g)
             st.divider()
             st.subheader("📁 캠페인별 광고그룹 성과")
+            if funnel_steps_g:
+                st.caption(f"🪜 퍼널 포함: {' → '.join([s['label'] for s in sorted(funnel_steps_g, key=lambda x: x['order'])])}")
             for camp in sorted(df_g["campaign"].unique()):
                 sub = df_g[df_g["campaign"] == camp]
-                with st.expander(f"📁 {camp}  (광고비 ₩{sub['cost'].sum():,.0f} · 노출 {int(sub['impressions'].sum()):,})"):
-                    render_adgroup_table(sub, conv_label, key=f"g_ag_{camp}", show_conversion=show_conv)
-            funnel_steps_g = get_funnel_steps(adv_code, "GOOGLE")
-            if funnel_steps_g:
-                st.divider()
-                st.subheader("🪜 퍼널 분석")
-                st.caption(f"설정된 단계: {' → '.join([s['label'] for s in sorted(funnel_steps_g, key=lambda x: x['order'])])}")
-                grp_g = st.radio("그룹화 기준", ["전체","캠페인","광고그룹","소재"],
-                                 horizontal=True, key="g_funnel_grp")
-                grp_map = {"전체":"overall","캠페인":"campaign","광고그룹":"adgroup","소재":"creative"}
-                render_funnel_table(df_g, funnel_steps_g, group_by=grp_map[grp_g], key="g_funnel")
+                with st.expander(
+                    f"📁 {camp}  (광고비 ₩{sub['cost'].sum():,.0f} · 노출 {int(sub['impressions'].sum()):,})"
+                ):
+                    render_adgroup_table(sub, conv_label, key=f"g_ag_{camp}",
+                                         show_conversion=show_conv, funnel_steps=funnel_steps_g)
 
     if "google_cre" in tabd:
         with tabd["google_cre"]:
@@ -1115,6 +1232,8 @@ if page == "📈 대시보드" and adv_code:
     if "facebook" in tabd:
         with tabd["facebook"]:
             df_f2 = df_all[df_all["platform"] == "FACEBOOK"]
+            funnel_steps_f = get_funnel_steps(adv_code, "FACEBOOK")
+
             conv_label = render_kpi(df_f2, total_budget, show_conv, key_suffix="f")
             st.divider()
             cc1, cc2 = st.columns([2, 1])
@@ -1129,22 +1248,21 @@ if page == "📈 대시보드" and adv_code:
                 st.plotly_chart(fig, use_container_width=True, key="f_camp_pie")
             st.divider()
             st.subheader("📋 캠페인별 성과")
-            render_campaign_table(df_f2, conv_label, key="f_camp", show_conversion=show_conv)
+            if funnel_steps_f:
+                st.caption(f"🪜 퍼널 포함: {' → '.join([s['label'] for s in sorted(funnel_steps_f, key=lambda x: x['order'])])}")
+            render_campaign_table(df_f2, conv_label, key="f_camp",
+                                  show_conversion=show_conv, funnel_steps=funnel_steps_f)
             st.divider()
             st.subheader("📁 캠페인별 광고그룹 성과")
+            if funnel_steps_f:
+                st.caption(f"🪜 퍼널 포함: {' → '.join([s['label'] for s in sorted(funnel_steps_f, key=lambda x: x['order'])])}")
             for camp in sorted(df_f2["campaign"].unique()):
                 sub = df_f2[df_f2["campaign"] == camp]
-                with st.expander(f"📁 {camp}  (광고비 ₩{sub['cost'].sum():,.0f} · 노출 {int(sub['impressions'].sum()):,})"):
-                    render_adgroup_table(sub, conv_label, key=f"f_ag_{camp}", show_conversion=show_conv)
-            funnel_steps_f = get_funnel_steps(adv_code, "FACEBOOK")
-            if funnel_steps_f:
-                st.divider()
-                st.subheader("🪜 퍼널 분석")
-                st.caption(f"설정된 단계: {' → '.join([s['label'] for s in sorted(funnel_steps_f, key=lambda x: x['order'])])}")
-                grp_f = st.radio("그룹화 기준", ["전체","캠페인","광고그룹","소재"],
-                                 horizontal=True, key="f_funnel_grp")
-                grp_map = {"전체":"overall","캠페인":"campaign","광고그룹":"adgroup","소재":"creative"}
-                render_funnel_table(df_f2, funnel_steps_f, group_by=grp_map[grp_f], key="f_funnel")
+                with st.expander(
+                    f"📁 {camp}  (광고비 ₩{sub['cost'].sum():,.0f} · 노출 {int(sub['impressions'].sum()):,})"
+                ):
+                    render_adgroup_table(sub, conv_label, key=f"f_ag_{camp}",
+                                         show_conversion=show_conv, funnel_steps=funnel_steps_f)
 
     if "facebook_cre" in tabd:
         with tabd["facebook_cre"]:
@@ -1539,7 +1657,6 @@ elif page == "🎯 전환지표 설정" and adv_code:
             SELECT platform, campaign, raw_data FROM perf WHERE advertiser_code = %(code)s
         """, engine, params={"code": adv_code})
 
-        # ── 폼으로 감싸서 저장 버튼을 눌러야 반영 ──────────────
         with st.form("conv_mapping_form"):
             c1, c2 = st.columns(2)
             with c1:
@@ -1601,8 +1718,9 @@ elif page == "🎯 전환지표 설정" and adv_code:
     st.divider()
     st.title("🪜 퍼널 단계 설정")
     st.markdown("""
-**다단계 전환을 한 표에서 분석할 수 있게 단계를 정의합니다.**
+**다단계 전환을 성과 테이블에 통합해서 분석할 수 있게 단계를 정의합니다.**
 - 매체별로 따로 설정합니다
+- 설정된 퍼널은 캠페인/광고그룹 성과 테이블에 컬럼으로 자동 추가됩니다
 - **CVR 기준**: `클릭 대비` = 항상 클릭수 기준 / `이전 단계 대비` = 직전 퍼널 단계 기준
 """)
 
@@ -1622,7 +1740,6 @@ elif page == "🎯 전환지표 설정" and adv_code:
 
         steps = st.session_state[sk]
 
-        # ── 단계 편집 UI (삭제 버튼만 즉시 반응, 나머지는 저장 시 반영) ──
         if steps:
             h = st.columns([0.4, 2.5, 2.2, 1.6, 0.5])
             h[0].markdown("**#**"); h[1].markdown("**컬럼**")
@@ -1654,7 +1771,6 @@ elif page == "🎯 전환지표 설정" and adv_code:
 
         bc1, bc2, _ = st.columns([1, 1, 4])
         if bc1.button("➕ 단계 추가", key=f"{sk}_add"):
-            # 현재 위젯 값을 반영한 new_steps로 갱신 후 추가
             st.session_state[sk] = new_steps + [{"column": avail_cols[0], "label": "", "cvr_base": "clicks"}]
             st.rerun()
 
@@ -1663,28 +1779,55 @@ elif page == "🎯 전환지표 설정" and adv_code:
             if empty:
                 st.error(f"❌ 라벨이 비어있는 단계: {empty}")
             else:
-                # 저장 시점에 위젯 최신 값을 session_state에 반영
                 st.session_state[sk] = new_steps
                 save_funnel_steps(adv_code, fpf, new_steps)
-                st.success(f"✅ {fpf} 매체 퍼널 {len(new_steps)}단계 저장 완료")
+                st.success(f"✅ {fpf} 매체 퍼널 {len(new_steps)}단계 저장 완료 — 대시보드 성과 테이블에 자동 반영됩니다")
                 st.rerun()
 
         if new_steps and all(s["label"].strip() for s in new_steps):
             st.divider()
-            st.subheader("👀 저장된 퍼널 미리보기")
-            st.caption("💡 미리보기는 DB에 저장된 퍼널 기준으로 표시됩니다. 변경 후 💾 저장을 먼저 눌러주세요.")
+            st.subheader("👀 퍼널 미리보기 (성과 테이블 통합 형태)")
+            st.caption("💡 저장된 퍼널 기준으로 미리보기합니다. 변경 후 💾 저장을 먼저 눌러주세요.")
             preview_df = pd.read_sql(
                 "SELECT * FROM perf WHERE advertiser_code=%(adv)s AND platform=%(pf)s",
                 engine, params={"adv": adv_code, "pf": fpf})
             if not preview_df.empty:
                 preview_df["date"] = pd.to_datetime(preview_df["date"])
-                # 저장된 퍼널 기준으로 미리보기 (DB에서 재조회)
                 saved_steps = get_funnel_steps(adv_code, fpf)
                 if saved_steps:
-                    pv_steps = [{"order": i+1, **s} for i, s in enumerate(saved_steps)]
-                    render_funnel_table(preview_df, pv_steps, group_by="overall", key=f"prev_{fpf}")
-                else:
-                    st.info("저장된 퍼널 단계가 없습니다. 위에서 설정 후 저장해주세요.")
+                    # 캠페인별 집계 미리보기
+                    st.caption("캠페인별 집계 예시 (광고비 기준 상위 5)")
+                    mapping_prev = get_conversion_mapping(adv_code)
+                    preview_df = compute_metrics(preview_df, mapping_prev)
+                    labels = sorted(set(preview_df["conv_label"].dropna().unique()))
+                    cl = "/".join(labels) if labels else "CPA"
+
+                    df_p = _add_funnel_cols_to_df(preview_df, saved_steps)
+                    agg_d = dict(impressions=("impressions","sum"), clicks=("clicks","sum"),
+                                 cost=("cost","sum"), conversions=("conversions","sum"))
+                    for step in saved_steps:
+                        k = f"_funnel_{step['order']}"
+                        if k in df_p.columns:
+                            agg_d[k] = (k, "sum")
+                    g = df_p.groupby("campaign", as_index=False).agg(**agg_d)
+                    g = _add_metric_cols(g, cl, True)
+                    g = _build_funnel_agg_cols(g, saved_steps)
+                    g = _add_funnel_rate_cols(g, saved_steps)
+                    g = g.sort_values("cost", ascending=False).head(5)
+
+                    funnel_labels = [s["label"] for s in sorted(saved_steps, key=lambda x: x["order"])]
+                    show_cols = (["campaign","노출","클릭","광고비","CTR (%)","CPC (₩)"] +
+                                 funnel_labels +
+                                 [f"CVR·{l}" for l in funnel_labels] +
+                                 [f"CPA·{l}" for l in funnel_labels])
+                    show_cols = [c for c in show_cols if c in g.columns]
+                    out = g[show_cols].rename(columns={"campaign":"캠페인"}).copy()
+                    for col in out.columns:
+                        if col in ["노출","클릭"] + funnel_labels:
+                            out[col] = out[col].apply(lambda x: f"{int(x):,}")
+                        elif col == "광고비" or "(₩)" in col:
+                            out[col] = out[col].apply(lambda x: f"₩{int(x):,}" if pd.notna(x) else "—")
+                    st.dataframe(out, use_container_width=True, hide_index=True)
 
 # ============ PDF 리포트 ============
 elif page == "📥 PDF 리포트" and adv_code:
@@ -1705,7 +1848,6 @@ elif page == "📥 PDF 리포트" and adv_code:
 
     min_d, max_d = raw["date"].min().date(), raw["date"].max().date()
 
-    # ── PDF 리포트 필터도 폼으로 감싸기 ──────────────────────
     with st.form("pdf_filter_form"):
         c1, c2 = st.columns(2)
         with c1:
@@ -1779,7 +1921,6 @@ elif page == "🏢 광고주 관리":
     st.dataframe(advs_show, use_container_width=True, hide_index=True)
     st.divider()
 
-    # ── 광고주 추가 (기존 form 유지) ──────────────────────────
     st.subheader("➕ 광고주 추가")
     with st.form("add_adv"):
         c1, c2, c3 = st.columns(3)
@@ -1808,10 +1949,8 @@ elif page == "🏢 광고주 관리":
                     st.error(f"오류: {e}")
     st.divider()
 
-    # ── 광고주 편집 — 폼으로 감싸기 ──────────────────────────
     st.subheader("✏️ 이름 / 예산 / 표시 옵션 편집")
     if not advs.empty:
-        # 선택은 폼 바깥(선택만으로 rerun 안 일어나도 무방)
         edit_code = st.selectbox("편집할 광고주", advs["코드"].tolist(),
             format_func=lambda c: f"{c} — {advs[advs['코드']==c]['이름'].iloc[0]}",
             key="adv_edit_select")
@@ -1834,7 +1973,6 @@ elif page == "🏢 광고주 관리":
                 st.rerun()
     st.divider()
 
-    # ── 광고주 삭제 — 폼으로 감싸기 ──────────────────────────
     st.subheader("🗑️ 광고주 삭제")
     if not advs.empty:
         del_code = st.selectbox("삭제할 광고주", advs["코드"].tolist(), key="del_sel",
@@ -1873,7 +2011,6 @@ elif page == "👤 계정 관리":
     adv_list    = q("SELECT code FROM advertisers", fetch=True)
     adv_options = [a[0] for a in adv_list]
 
-    # ── 계정 생성 — 폼으로 감싸기 ──────────────────────────────
     st.subheader("➕ 계정 생성")
     with st.form("create_user_form"):
         new_email = st.text_input("이메일")
@@ -1897,7 +2034,6 @@ elif page == "👤 계정 관리":
                     st.error(f"이미 존재하는 계정이거나 오류: {e}")
     st.divider()
 
-    # ── 계정 수정 — 폼으로 감싸기 ──────────────────────────────
     st.subheader("✏️ 계정 수정")
     sel_user = st.selectbox("계정 선택", users_df["email"], key="select_user")
     urow = users_df[users_df["email"] == sel_user].iloc[0]
@@ -1924,7 +2060,6 @@ elif page == "👤 계정 관리":
             st.rerun()
     st.divider()
 
-    # ── 계정 삭제 — 폼으로 감싸기 ──────────────────────────────
     st.subheader("🗑️ 계정 삭제")
     with st.form("del_user_form"):
         del_user = st.selectbox("삭제할 계정", users_df["email"])
