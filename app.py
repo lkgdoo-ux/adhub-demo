@@ -10,8 +10,6 @@ from sqlalchemy import create_engine, text
 st.set_page_config(page_title="AdHub", page_icon="📊", layout="wide")
 
 # ============ DB 연결 ============
-# .streamlit/secrets.toml 또는 Streamlit Cloud Secrets에 DATABASE_URL 등록 필요
-# 예) DATABASE_URL = "postgresql://postgres:PASSWORD@db.xxxx.supabase.co:5432/postgres"
 @st.cache_resource
 def get_engine():
     url = st.secrets["DATABASE_URL"]
@@ -21,11 +19,6 @@ engine = get_engine()
 
 # ============ 공통 쿼리 헬퍼 ============
 def q(sql, params=(), fetch=True):
-    """
-    SQLite 스타일(?) 파라미터를 PostgreSQL(:p1, :p2) 로 변환해 실행.
-    fetch=True  → 결과 rows 반환
-    fetch=False → INSERT/UPDATE/DELETE 실행만
-    """
     counter = [0]
     param_dict = {}
 
@@ -36,18 +29,13 @@ def q(sql, params=(), fetch=True):
         return f":{k}"
 
     converted = re.sub(r"\?", replacer, sql)
-
-    # SQLite 전용 문법 → PostgreSQL
     converted = converted.replace(
         "INSERT OR IGNORE INTO", "INSERT INTO"
     ).replace(
         "INSERT OR REPLACE INTO", "INSERT INTO"
     )
-    # datetime('now') → now()
     converted = re.sub(r"datetime\('now'\)", "now()", converted)
 
-    # INSERT OR IGNORE 처리: ON CONFLICT DO NOTHING 추가
-    # (테이블별로 PK가 다르므로 단순 방어적 처리)
     if "INSERT INTO" in converted and "ON CONFLICT" not in converted and "INSERT OR IGNORE" in sql:
         converted = converted + " ON CONFLICT DO NOTHING"
 
@@ -141,7 +129,6 @@ def init_db():
             cvr_base TEXT DEFAULT 'clicks'
         )"""))
 
-        # 기본 사용자
         con.execute(text("""
         INSERT INTO users (email, name, role, password) VALUES
             ('admin@adhub.com',  '김에이전시', 'AGENCY_ADMIN', '1234'),
@@ -150,7 +137,6 @@ def init_db():
         ON CONFLICT (email) DO NOTHING
         """))
 
-        # 기본 광고주
         con.execute(text("""
         INSERT INTO advertisers (code, name) VALUES
             ('SCONEC', '스코넥엔터테인먼트'),
@@ -159,7 +145,6 @@ def init_db():
         ON CONFLICT (code) DO NOTHING
         """))
 
-        # 기본 권한
         con.execute(text("""
         INSERT INTO permissions (email, advertiser_code, level) VALUES
             ('admin@adhub.com',  'SCONEC', 'OWNER'),
@@ -555,10 +540,8 @@ def render_kpi(df, total_budget=0, show_conversion=True, key_suffix=""):
     conv_label = "/".join(labels) if labels else "CPA"
 
     if total_budget > 0:
-        # ── 좌/우 2분할 ──────────────────────────────────────────
         col_left, col_right = st.columns(2)
 
-        # ── 왼쪽: 예산 현황 ──────────────────────────────────────
         with col_left:
             st.markdown("#### 예산 현황")
             col_donut, col_budget = st.columns([1, 1])
@@ -572,7 +555,6 @@ def render_kpi(df, total_budget=0, show_conversion=True, key_suffix=""):
                 st.metric("소진 광고비", f"₩{tot_cost:,.0f}")
                 st.metric("잔여 예산",  f"₩{max(total_budget - tot_cost, 0):,.0f}")
 
-        # ── 오른쪽: 주요 지표 ────────────────────────────────────
         with col_right:
             st.markdown("#### 주요 지표")
             if show_conversion:
@@ -597,7 +579,6 @@ def render_kpi(df, total_budget=0, show_conversion=True, key_suffix=""):
                 r2[2].metric("CPC", f"₩{cpc:,.0f}")
 
     else:
-        # total_budget 없을 때 기존 로직 유지
         if show_conversion:
             c = st.columns(4)
             c[0].metric("광고비", f"₩{tot_cost:,.0f}")
@@ -636,7 +617,7 @@ def _add_metric_cols(g, conv_label, show_conversion=True):
         g["전환"] = g["conversions"].astype(int)
     return g
 
-# ============ 캠페인 테이블 (Total 행 상단 고정) ============
+# ============ 캠페인 테이블 ============
 def render_campaign_table(df, conv_label, key, show_conversion=True):
     unit = st.radio("집계 단위", ["캠페인 합계","일자별"], horizontal=True, key=f"{key}_unit")
     base_cols   = ["노출","클릭","광고비"]
@@ -662,7 +643,6 @@ def render_campaign_table(df, conv_label, key, show_conversion=True):
         show = show.rename(columns={"campaign":"캠페인"}).sort_values(
             ["일자","광고비"], ascending=[True, False])
 
-    # ── 포맷 적용 ──
     show = show.copy()
     for col in show.columns:
         if col in ["노출","클릭","전환"]:
@@ -670,7 +650,6 @@ def render_campaign_table(df, conv_label, key, show_conversion=True):
         elif col == "광고비" or "(₩)" in col:
             show[col] = show[col].apply(lambda x: f"₩{int(x):,}")
 
-    # ── Total 행 계산 (포맷 전 원본 g 기준) ──
     total_row = {"캠페인": "🔢 Total"}
     if unit == "일자별":
         total_row["일자"] = ""
@@ -693,16 +672,12 @@ def render_campaign_table(df, conv_label, key, show_conversion=True):
         total_row[f"{conv_label} (₩)"] = f"₩{int(safe_div(tot_cost, tot_conv)):,}" if tot_conv else "—"
 
     total_df = pd.DataFrame([total_row])
-    # 컬럼 순서 맞추기
     total_df = total_df[[c for c in show.columns if c in total_df.columns]]
 
-    st.markdown(
-        "<style>.total-table thead{display:none}</style>",
-        unsafe_allow_html=True)
     st.dataframe(total_df, use_container_width=True, hide_index=True)
     st.dataframe(show, use_container_width=True, hide_index=True)
 
-# ============ 광고그룹 테이블 (Total 행 상단 고정) ============
+# ============ 광고그룹 테이블 ============
 def render_adgroup_table(df, conv_label, key, show_conversion=True):
     unit = st.radio("집계 단위", ["광고그룹 합계","일자별"], horizontal=True, key=f"{key}_unit")
     base_cols   = ["노출","클릭","광고비"]
@@ -728,7 +703,6 @@ def render_adgroup_table(df, conv_label, key, show_conversion=True):
         show = show.rename(columns={"adgroup":"광고그룹"}).sort_values(
             ["일자","광고비"], ascending=[True, False])
 
-    # ── 포맷 적용 ──
     show = show.copy()
     for col in show.columns:
         if col in ["노출","클릭","전환"]:
@@ -736,7 +710,6 @@ def render_adgroup_table(df, conv_label, key, show_conversion=True):
         elif col == "광고비" or "(₩)" in col:
             show[col] = show[col].apply(lambda x: f"₩{int(x):,}")
 
-    # ── Total 행 계산 ──
     tot_imp  = int(df["impressions"].sum())
     tot_clk  = int(df["clicks"].sum())
     tot_cost = float(df["cost"].sum())
@@ -866,18 +839,15 @@ def render_funnel_table(df, funnel_steps, group_by="overall", key=""):
             row[cvr_label] = f"{row_series[scol] / base_val * 100:.2f}%" if base_val > 0 else "—"
         return row
 
-    # ── Total 행 (g 전체 합산) ──
     total_series = g[[c for c in g.columns if c != "_grp"]].sum()
     total_row_data = build_out_row(total_series, "🔢 Total")
     total_df = pd.DataFrame([total_row_data])
 
-    # ── 개별 그룹 행 ──
     rows = []
     for _, row_s in g.iterrows():
         rows.append(build_out_row(row_s, row_s["_grp"]))
     out = pd.DataFrame(rows)
 
-    # ── Total 고정 표시 → 데이터 표시 ──
     st.dataframe(total_df, use_container_width=True, hide_index=True)
     st.dataframe(out, use_container_width=True, hide_index=True)
 
@@ -1027,14 +997,26 @@ if page == "📈 대시보드" and adv_code:
         total_budget = 0
         show_conv    = True
 
-    fc1, _ = st.columns([3, 2])
-    with fc1:
-        date_range = st.date_input("📅 기간 선택", value=(min_d, max_d),
-                                   min_value=min_d, max_value=max_d)
+    # ── 기간 필터: 버튼을 눌러야 조회 ──────────────────────
+    with st.form("dashboard_filter_form"):
+        fc1, fc2 = st.columns([3, 1])
+        with fc1:
+            date_range = st.date_input("📅 기간 선택", value=(min_d, max_d),
+                                       min_value=min_d, max_value=max_d)
+        with fc2:
+            st.markdown("<br>", unsafe_allow_html=True)
+            submitted = st.form_submit_button("🔍 조회", type="primary", use_container_width=True)
+
+    # session_state에 적용된 기간 저장 (처음 진입 시 자동 조회)
+    filter_key = f"dash_filter_{adv_code}"
+    if submitted or filter_key not in st.session_state:
+        st.session_state[filter_key] = date_range
+
+    applied_range = st.session_state[filter_key]
 
     df_all = raw.copy()
-    if isinstance(date_range, tuple) and len(date_range) == 2:
-        d_from, d_to = date_range
+    if isinstance(applied_range, tuple) and len(applied_range) == 2:
+        d_from, d_to = applied_range
         df_all = df_all[(df_all["date"] >= pd.Timestamp(d_from)) &
                         (df_all["date"] <= pd.Timestamp(d_to))]
 
@@ -1254,7 +1236,6 @@ elif page == "📤 데이터 업로드" and adv_code:
             if other_numeric:
                 st.caption(f"📌 raw_data에 저장될 전환 후보 컬럼: **{', '.join(other_numeric)}**")
 
-            # 업로드 모드
             st.divider()
             st.subheader("📦 업로드 방식 선택")
             mode = st.radio("업로드 모드",
@@ -1321,7 +1302,6 @@ elif page == "📤 데이터 업로드" and adv_code:
                 kc[2].metric("총 클릭", f"{int(df['clicks'].sum()):,}")
                 kc[3].metric("총 비용", f"₩{float(df['cost'].sum()):,.0f}")
 
-                # 영향도 미리 계산
                 if mode.startswith("②"):
                     dates_in_file = list(df["date"].unique())
                     ph = ",".join(["?" for _ in dates_in_file])
@@ -1559,32 +1539,37 @@ elif page == "🎯 전환지표 설정" and adv_code:
             SELECT platform, campaign, raw_data FROM perf WHERE advertiser_code = %(code)s
         """, engine, params={"code": adv_code})
 
-        c1, c2 = st.columns(2)
-        with c1:
-            sel_pf = st.selectbox("매체", ["GOOGLE","FACEBOOK"])
-        with c2:
-            camps = ["* (이 매체의 기본값)"] + sorted(
-                raw[raw["platform"] == sel_pf]["campaign"].dropna().unique().tolist())
-            sel_camp = st.selectbox("캠페인", camps)
-            sel_camp_val = "*" if sel_camp.startswith("*") else sel_camp
+        # ── 폼으로 감싸서 저장 버튼을 눌러야 반영 ──────────────
+        with st.form("conv_mapping_form"):
+            c1, c2 = st.columns(2)
+            with c1:
+                sel_pf = st.selectbox("매체", ["GOOGLE","FACEBOOK"])
+            with c2:
+                camps = ["* (이 매체의 기본값)"] + sorted(
+                    raw[raw["platform"] == sel_pf]["campaign"].dropna().unique().tolist())
+                sel_camp = st.selectbox("캠페인", camps)
 
-        conv_keys = set()
-        for rd in raw[raw["platform"] == sel_pf]["raw_data"].dropna():
-            try:
-                conv_keys.update(json.loads(rd).keys())
-            except:
-                pass
-        conv_keys = sorted(conv_keys)
+            conv_keys = set()
+            for rd in raw[raw["platform"] == sel_pf]["raw_data"].dropna():
+                try:
+                    conv_keys.update(json.loads(rd).keys())
+                except:
+                    pass
+            conv_keys = sorted(conv_keys)
 
-        if not conv_keys:
-            st.warning(f"{sel_pf} 데이터가 없거나 전환 후보 컬럼이 없습니다.")
-        else:
-            c3, c4 = st.columns(2)
-            with c3:
-                sel_col = st.selectbox("전환으로 사용할 컬럼", conv_keys)
-            with c4:
-                sel_lbl = st.selectbox("표시 라벨", ["CPI","CPA","CPL","CPV","CPE"])
-            if st.button("💾 저장", type="primary"):
+            if not conv_keys:
+                st.warning(f"{sel_pf} 데이터가 없거나 전환 후보 컬럼이 없습니다.")
+                form_submitted = st.form_submit_button("💾 저장", disabled=True)
+            else:
+                c3, c4 = st.columns(2)
+                with c3:
+                    sel_col = st.selectbox("전환으로 사용할 컬럼", conv_keys)
+                with c4:
+                    sel_lbl = st.selectbox("표시 라벨", ["CPI","CPA","CPL","CPV","CPE"])
+                form_submitted = st.form_submit_button("💾 저장", type="primary")
+
+            if form_submitted and conv_keys:
+                sel_camp_val = "*" if sel_camp.startswith("*") else sel_camp
                 q("""
                     INSERT INTO conversion_mapping
                         (advertiser_code, platform, campaign, conversion_column, conversion_label, updated_at)
@@ -1595,19 +1580,22 @@ elif page == "🎯 전환지표 설정" and adv_code:
                         updated_at        = EXCLUDED.updated_at
                 """, (adv_code, sel_pf, sel_camp_val, sel_col, sel_lbl,
                       datetime.now().strftime("%Y-%m-%d %H:%M:%S")), fetch=False)
-                st.success("저장됨"); st.rerun()
+                st.success("저장됨")
+                st.rerun()
 
         st.divider()
         st.subheader("🗑️ 매핑 삭제")
         if not cur_map.empty:
-            del_idx = st.selectbox("삭제할 매핑", cur_map.index,
-                format_func=lambda i: f"{cur_map.iloc[i]['매체']} / {cur_map.iloc[i]['캠페인']} → "
-                                      f"{cur_map.iloc[i]['전환컬럼']}({cur_map.iloc[i]['라벨']})")
-            if st.button("삭제"):
-                row = cur_map.iloc[del_idx]
-                q("DELETE FROM conversion_mapping WHERE advertiser_code=? AND platform=? AND campaign=?",
-                  (adv_code, row["매체"], row["캠페인"]), fetch=False)
-                st.success("삭제됨"); st.rerun()
+            with st.form("conv_del_form"):
+                del_idx = st.selectbox("삭제할 매핑", cur_map.index,
+                    format_func=lambda i: f"{cur_map.iloc[i]['매체']} / {cur_map.iloc[i]['캠페인']} → "
+                                          f"{cur_map.iloc[i]['전환컬럼']}({cur_map.iloc[i]['라벨']})")
+                if st.form_submit_button("🗑️ 삭제 확인", type="primary"):
+                    row = cur_map.iloc[del_idx]
+                    q("DELETE FROM conversion_mapping WHERE advertiser_code=? AND platform=? AND campaign=?",
+                      (adv_code, row["매체"], row["캠페인"]), fetch=False)
+                    st.success("삭제됨")
+                    st.rerun()
 
     # ── 퍼널 설정 ──────────────────────────────────────────
     st.divider()
@@ -1634,12 +1622,14 @@ elif page == "🎯 전환지표 설정" and adv_code:
 
         steps = st.session_state[sk]
 
+        # ── 단계 편집 UI (삭제 버튼만 즉시 반응, 나머지는 저장 시 반영) ──
         if steps:
             h = st.columns([0.4, 2.5, 2.2, 1.6, 0.5])
             h[0].markdown("**#**"); h[1].markdown("**컬럼**")
             h[2].markdown("**라벨**"); h[3].markdown("**CVR 기준**"); h[4].markdown("**삭제**")
 
         new_steps = []
+        delete_triggered = False
         for i, step in enumerate(steps):
             cr = st.columns([0.4, 2.5, 2.2, 1.6, 0.5])
             cr[0].markdown(f"**{i+1}**")
@@ -1653,16 +1643,19 @@ elif page == "🎯 전환지표 설정" and adv_code:
                 format_func=lambda x: "클릭 대비" if x == "clicks" else "이전 단계 대비",
                 key=f"{sk}_base_{i}", label_visibility="collapsed")
             del_clicked = cr[4].button("🗑️", key=f"{sk}_del_{i}")
-            if not del_clicked:
-                new_steps.append({"column": sel_col, "label": sel_label, "cvr_base": sel_base})
+            if del_clicked:
+                delete_triggered = True
             else:
-                st.session_state[sk] = new_steps + steps[i+1:]
-                st.rerun()
-        st.session_state[sk] = new_steps
+                new_steps.append({"column": sel_col, "label": sel_label, "cvr_base": sel_base})
+
+        if delete_triggered:
+            st.session_state[sk] = new_steps
+            st.rerun()
 
         bc1, bc2, _ = st.columns([1, 1, 4])
         if bc1.button("➕ 단계 추가", key=f"{sk}_add"):
-            st.session_state[sk].append({"column": avail_cols[0], "label": "", "cvr_base": "clicks"})
+            # 현재 위젯 값을 반영한 new_steps로 갱신 후 추가
+            st.session_state[sk] = new_steps + [{"column": avail_cols[0], "label": "", "cvr_base": "clicks"}]
             st.rerun()
 
         if new_steps and bc2.button("💾 저장", type="primary", key=f"{sk}_save"):
@@ -1670,19 +1663,28 @@ elif page == "🎯 전환지표 설정" and adv_code:
             if empty:
                 st.error(f"❌ 라벨이 비어있는 단계: {empty}")
             else:
+                # 저장 시점에 위젯 최신 값을 session_state에 반영
+                st.session_state[sk] = new_steps
                 save_funnel_steps(adv_code, fpf, new_steps)
-                st.success(f"✅ {fpf} 매체 퍼널 {len(new_steps)}단계 저장 완료"); st.rerun()
+                st.success(f"✅ {fpf} 매체 퍼널 {len(new_steps)}단계 저장 완료")
+                st.rerun()
 
         if new_steps and all(s["label"].strip() for s in new_steps):
             st.divider()
-            st.subheader("👀 미리보기")
+            st.subheader("👀 저장된 퍼널 미리보기")
+            st.caption("💡 미리보기는 DB에 저장된 퍼널 기준으로 표시됩니다. 변경 후 💾 저장을 먼저 눌러주세요.")
             preview_df = pd.read_sql(
                 "SELECT * FROM perf WHERE advertiser_code=%(adv)s AND platform=%(pf)s",
                 engine, params={"adv": adv_code, "pf": fpf})
             if not preview_df.empty:
                 preview_df["date"] = pd.to_datetime(preview_df["date"])
-                pv_steps = [{"order": i+1, **s} for i, s in enumerate(new_steps)]
-                render_funnel_table(preview_df, pv_steps, group_by="overall", key=f"prev_{fpf}")
+                # 저장된 퍼널 기준으로 미리보기 (DB에서 재조회)
+                saved_steps = get_funnel_steps(adv_code, fpf)
+                if saved_steps:
+                    pv_steps = [{"order": i+1, **s} for i, s in enumerate(saved_steps)]
+                    render_funnel_table(preview_df, pv_steps, group_by="overall", key=f"prev_{fpf}")
+                else:
+                    st.info("저장된 퍼널 단계가 없습니다. 위에서 설정 후 저장해주세요.")
 
 # ============ PDF 리포트 ============
 elif page == "📥 PDF 리포트" and adv_code:
@@ -1702,20 +1704,30 @@ elif page == "📥 PDF 리포트" and adv_code:
     show_conv    = bool(adv_row[0][2]) if adv_row else True
 
     min_d, max_d = raw["date"].min().date(), raw["date"].max().date()
-    c1, c2 = st.columns(2)
-    with c1:
-        d_range = st.date_input("📅 리포트 기간", value=(min_d, max_d),
-                                min_value=min_d, max_value=max_d, key="rep_date")
-    with c2:
-        all_pfs = sorted(raw["platform"].unique())
-        sel_pfs = st.multiselect("매체", all_pfs, default=all_pfs, key="rep_pf")
 
+    # ── PDF 리포트 필터도 폼으로 감싸기 ──────────────────────
+    with st.form("pdf_filter_form"):
+        c1, c2 = st.columns(2)
+        with c1:
+            d_range = st.date_input("📅 리포트 기간", value=(min_d, max_d),
+                                    min_value=min_d, max_value=max_d, key="rep_date")
+        with c2:
+            all_pfs = sorted(raw["platform"].unique())
+            sel_pfs = st.multiselect("매체", all_pfs, default=all_pfs, key="rep_pf")
+        filter_ok = st.form_submit_button("🔍 미리보기 조회", type="primary")
+
+    pdf_filter_key = f"pdf_filter_{adv_code}"
+    if filter_ok or pdf_filter_key not in st.session_state:
+        st.session_state[pdf_filter_key] = {"d_range": d_range, "sel_pfs": sel_pfs}
+
+    applied = st.session_state[pdf_filter_key]
     df_rep = raw.copy()
-    if isinstance(d_range, tuple) and len(d_range) == 2:
-        df_rep = df_rep[(df_rep["date"] >= pd.Timestamp(d_range[0])) &
-                        (df_rep["date"] <= pd.Timestamp(d_range[1]))]
-    if sel_pfs:
-        df_rep = df_rep[df_rep["platform"].isin(sel_pfs)]
+    ar = applied["d_range"]
+    if isinstance(ar, tuple) and len(ar) == 2:
+        df_rep = df_rep[(df_rep["date"] >= pd.Timestamp(ar[0])) &
+                        (df_rep["date"] <= pd.Timestamp(ar[1]))]
+    if applied["sel_pfs"]:
+        df_rep = df_rep[df_rep["platform"].isin(applied["sel_pfs"])]
     if df_rep.empty:
         st.warning("선택한 조건에 데이터가 없습니다."); st.stop()
 
@@ -1767,6 +1779,7 @@ elif page == "🏢 광고주 관리":
     st.dataframe(advs_show, use_container_width=True, hide_index=True)
     st.divider()
 
+    # ── 광고주 추가 (기존 form 유지) ──────────────────────────
     st.subheader("➕ 광고주 추가")
     with st.form("add_adv"):
         c1, c2, c3 = st.columns(3)
@@ -1795,39 +1808,48 @@ elif page == "🏢 광고주 관리":
                     st.error(f"오류: {e}")
     st.divider()
 
+    # ── 광고주 편집 — 폼으로 감싸기 ──────────────────────────
     st.subheader("✏️ 이름 / 예산 / 표시 옵션 편집")
     if not advs.empty:
+        # 선택은 폼 바깥(선택만으로 rerun 안 일어나도 무방)
         edit_code = st.selectbox("편집할 광고주", advs["코드"].tolist(),
-            format_func=lambda c: f"{c} — {advs[advs['코드']==c]['이름'].iloc[0]}")
+            format_func=lambda c: f"{c} — {advs[advs['코드']==c]['이름'].iloc[0]}",
+            key="adv_edit_select")
         cur_row = advs[advs["코드"] == edit_code].iloc[0]
-        c1, c2 = st.columns(2)
-        with c1: new_name2   = st.text_input("이름", value=cur_row["이름"], key="edit_name")
-        with c2: new_budget2 = st.number_input("총 예산 (₩)", min_value=0, step=100000,
-                                                value=int(cur_row["총예산"]), key="edit_bud")
-        cc1, cc2 = st.columns(2)
-        with cc1: new_show2     = st.checkbox("전환지표 표시",     value=bool(cur_row["전환표시"]), key="edit_show")
-        with cc2: new_show_cre2 = st.checkbox("광고 소재 탭 표시", value=bool(cur_row["소재표시"]), key="edit_show_cre")
-        if st.button("변경 저장"):
-            q("""UPDATE advertisers SET name=?, total_budget=?, show_conversion=?, show_creative=?
-                 WHERE code=?""",
-              (new_name2, float(new_budget2), 1 if new_show2 else 0, 1 if new_show_cre2 else 0, edit_code),
-              fetch=False)
-            st.success("변경됨"); st.rerun()
+
+        with st.form("edit_adv_form"):
+            c1, c2 = st.columns(2)
+            with c1: new_name2   = st.text_input("이름", value=cur_row["이름"])
+            with c2: new_budget2 = st.number_input("총 예산 (₩)", min_value=0, step=100000,
+                                                    value=int(cur_row["총예산"]))
+            cc1, cc2 = st.columns(2)
+            with cc1: new_show2     = st.checkbox("전환지표 표시",     value=bool(cur_row["전환표시"]))
+            with cc2: new_show_cre2 = st.checkbox("광고 소재 탭 표시", value=bool(cur_row["소재표시"]))
+            if st.form_submit_button("💾 변경 저장", type="primary"):
+                q("""UPDATE advertisers SET name=?, total_budget=?, show_conversion=?, show_creative=?
+                     WHERE code=?""",
+                  (new_name2, float(new_budget2), 1 if new_show2 else 0, 1 if new_show_cre2 else 0, edit_code),
+                  fetch=False)
+                st.success("변경됨")
+                st.rerun()
     st.divider()
 
+    # ── 광고주 삭제 — 폼으로 감싸기 ──────────────────────────
     st.subheader("🗑️ 광고주 삭제")
     if not advs.empty:
         del_code = st.selectbox("삭제할 광고주", advs["코드"].tolist(), key="del_sel",
             format_func=lambda c: f"{c} — {advs[advs['코드']==c]['이름'].iloc[0]}")
-        confirm = st.text_input(f"확인을 위해 코드 '{del_code}' 를 입력하세요")
-        if st.button("영구 삭제"):
-            if confirm == del_code:
-                for tbl in ["perf","upload_log","conversion_mapping","permissions","funnel_mapping"]:
-                    q(f"DELETE FROM {tbl} WHERE advertiser_code=?", (del_code,), fetch=False)
-                q("DELETE FROM advertisers WHERE code=?", (del_code,), fetch=False)
-                st.success("삭제됨"); st.rerun()
-            else:
-                st.error("코드 불일치")
+        with st.form("del_adv_form"):
+            confirm = st.text_input(f"확인을 위해 코드 '{del_code}' 를 입력하세요")
+            if st.form_submit_button("🗑️ 영구 삭제", type="primary"):
+                if confirm == del_code:
+                    for tbl in ["perf","upload_log","conversion_mapping","permissions","funnel_mapping"]:
+                        q(f"DELETE FROM {tbl} WHERE advertiser_code=?", (del_code,), fetch=False)
+                    q("DELETE FROM advertisers WHERE code=?", (del_code,), fetch=False)
+                    st.success("삭제됨")
+                    st.rerun()
+                else:
+                    st.error("코드 불일치")
 
 # ============ 계정 관리 ============
 elif page == "👤 계정 관리":
@@ -1848,57 +1870,66 @@ elif page == "👤 계정 관리":
     st.dataframe(users_df, use_container_width=True, hide_index=True)
     st.divider()
 
-    st.subheader("➕ 계정 생성")
-    new_email = st.text_input("이메일")
-    new_name  = st.text_input("이름")
-    new_pw    = st.text_input("비밀번호", type="password")
-    new_role  = st.selectbox("권한", ["AGENCY_ADMIN","OWNER","MANAGER","VIEWER"], key="new_role")
-    adv_list  = q("SELECT code FROM advertisers", fetch=True)
+    adv_list    = q("SELECT code FROM advertisers", fetch=True)
     adv_options = [a[0] for a in adv_list]
-    sel_advs  = st.multiselect("광고주 연결", adv_options)
 
-    if st.button("계정 생성"):
-        if not new_email or not new_pw:
-            st.error("이메일/비밀번호 입력 필요")
-        else:
-            try:
-                q("INSERT INTO users (email, name, role, password) VALUES (?,?,?,?)",
-                  (new_email, new_name, new_role, new_pw), fetch=False)
-                for adv in sel_advs:
-                    q("INSERT INTO permissions (email, advertiser_code, level) VALUES (?,?,?)",
-                      (new_email, adv, new_role), fetch=False)
-                st.success("계정 생성 완료"); st.rerun()
-            except Exception as e:
-                st.error(f"이미 존재하는 계정이거나 오류: {e}")
+    # ── 계정 생성 — 폼으로 감싸기 ──────────────────────────────
+    st.subheader("➕ 계정 생성")
+    with st.form("create_user_form"):
+        new_email = st.text_input("이메일")
+        new_name  = st.text_input("이름")
+        new_pw    = st.text_input("비밀번호", type="password")
+        new_role  = st.selectbox("권한", ["AGENCY_ADMIN","OWNER","MANAGER","VIEWER"])
+        sel_advs  = st.multiselect("광고주 연결", adv_options)
+        if st.form_submit_button("✅ 계정 생성", type="primary"):
+            if not new_email or not new_pw:
+                st.error("이메일/비밀번호 입력 필요")
+            else:
+                try:
+                    q("INSERT INTO users (email, name, role, password) VALUES (?,?,?,?)",
+                      (new_email, new_name, new_role, new_pw), fetch=False)
+                    for adv in sel_advs:
+                        q("INSERT INTO permissions (email, advertiser_code, level) VALUES (?,?,?)",
+                          (new_email, adv, new_role), fetch=False)
+                    st.success("계정 생성 완료")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"이미 존재하는 계정이거나 오류: {e}")
     st.divider()
 
+    # ── 계정 수정 — 폼으로 감싸기 ──────────────────────────────
     st.subheader("✏️ 계정 수정")
     sel_user = st.selectbox("계정 선택", users_df["email"], key="select_user")
     urow = users_df[users_df["email"] == sel_user].iloc[0]
-    edit_name = st.text_input("이름", value=urow["name"])
-    roles = ["AGENCY_ADMIN","OWNER","MANAGER","VIEWER"]
-    edit_role = st.selectbox("권한", roles,
-        index=roles.index(urow["role"]) if urow["role"] in roles else 0,
-        key="edit_role_select")
-    new_pw2 = st.text_input("새 비밀번호", type="password")
-    cur_advs = urow["advertisers"].split(",") if urow["advertisers"] else []
-    edit_advs = st.multiselect("광고주", adv_options, default=[a for a in cur_advs if a in adv_options])
 
-    if st.button("수정 저장"):
-        q("UPDATE users SET name=?, role=? WHERE email=?",
-          (edit_name, edit_role, sel_user), fetch=False)
-        if new_pw2:
-            q("UPDATE users SET password=? WHERE email=?", (new_pw2, sel_user), fetch=False)
-        q("DELETE FROM permissions WHERE email=?", (sel_user,), fetch=False)
-        for adv in edit_advs:
-            q("INSERT INTO permissions (email, advertiser_code, level) VALUES (?,?,?)",
-              (sel_user, adv, edit_role), fetch=False)
-        st.success("수정 완료"); st.rerun()
+    with st.form("edit_user_form"):
+        edit_name = st.text_input("이름", value=urow["name"])
+        roles = ["AGENCY_ADMIN","OWNER","MANAGER","VIEWER"]
+        edit_role = st.selectbox("권한", roles,
+            index=roles.index(urow["role"]) if urow["role"] in roles else 0)
+        new_pw2 = st.text_input("새 비밀번호 (변경 시에만 입력)", type="password")
+        cur_advs = urow["advertisers"].split(",") if urow["advertisers"] else []
+        edit_advs = st.multiselect("광고주", adv_options,
+                                   default=[a for a in cur_advs if a in adv_options])
+        if st.form_submit_button("💾 수정 저장", type="primary"):
+            q("UPDATE users SET name=?, role=? WHERE email=?",
+              (edit_name, edit_role, sel_user), fetch=False)
+            if new_pw2:
+                q("UPDATE users SET password=? WHERE email=?", (new_pw2, sel_user), fetch=False)
+            q("DELETE FROM permissions WHERE email=?", (sel_user,), fetch=False)
+            for adv in edit_advs:
+                q("INSERT INTO permissions (email, advertiser_code, level) VALUES (?,?,?)",
+                  (sel_user, adv, edit_role), fetch=False)
+            st.success("수정 완료")
+            st.rerun()
     st.divider()
 
+    # ── 계정 삭제 — 폼으로 감싸기 ──────────────────────────────
     st.subheader("🗑️ 계정 삭제")
-    del_user = st.selectbox("삭제할 계정", users_df["email"], key="del_user")
-    if st.button("삭제"):
-        q("DELETE FROM permissions WHERE email=?", (del_user,), fetch=False)
-        q("DELETE FROM users WHERE email=?", (del_user,), fetch=False)
-        st.success("삭제 완료"); st.rerun()
+    with st.form("del_user_form"):
+        del_user = st.selectbox("삭제할 계정", users_df["email"])
+        if st.form_submit_button("🗑️ 삭제 확인", type="primary"):
+            q("DELETE FROM permissions WHERE email=?", (del_user,), fetch=False)
+            q("DELETE FROM users WHERE email=?", (del_user,), fetch=False)
+            st.success("삭제 완료")
+            st.rerun()
