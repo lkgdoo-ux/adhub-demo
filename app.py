@@ -824,6 +824,8 @@ def render_adgroup_table(df, conv_label, key, show_conversion=True, funnel_steps
     집계 단위:
       - 광고그룹 합계: 광고그룹별 집계
       - 일자별: 광고그룹 > 일자 드릴다운 (expander로 펼치기)
+
+    [수정] key 파라미터를 모든 하위 위젯에 전파하여 StreamlitDuplicateElementKey 방지
     """
     unit = st.radio("집계 단위", ["광고그룹 합계","일자별"], horizontal=True, key=f"{key}_unit")
     base_cols   = ["노출","클릭","광고비"]
@@ -903,6 +905,12 @@ def render_adgroup_table(df, conv_label, key, show_conversion=True, funnel_steps
         st.dataframe(total_df, use_container_width=True, hide_index=True)
         st.dataframe(out, use_container_width=True, hide_index=True)
 
+        # [수정] key에 `key` prefix 포함하여 중복 방지
+        csv_bytes = out.to_csv(index=False).encode("utf-8-sig")
+        st.download_button("📥 CSV 다운로드", data=csv_bytes,
+                           file_name=f"adgroup_{key}_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                           mime="text/csv", key=f"{key}_ag_dl")
+
     # ── 일자별 드릴다운 모드 ────────────────────────────────
     else:
         # 광고그룹 전체 합계 (최상단)
@@ -926,6 +934,8 @@ def render_adgroup_table(df, conv_label, key, show_conversion=True, funnel_steps
             ag_imp  = int(ag_row["impressions"])
             df_ag   = df_f[df_f["adgroup"] == ag_name]
 
+            # [수정] expander key에 상위 key prefix 추가
+            ag_safe = re.sub(r"[^\w]", "_", ag_name)[:30]
             with st.expander(
                 f"📂 {ag_name}  (광고비 ₩{ag_cost:,.0f} · 노출 {ag_imp:,})",
                 expanded=False
@@ -953,23 +963,17 @@ def render_adgroup_table(df, conv_label, key, show_conversion=True, funnel_steps
                 st.dataframe(ag_total_df, use_container_width=True, hide_index=True)
                 st.dataframe(out_date[show_cols_exp], use_container_width=True, hide_index=True)
 
-                # 일자별 CSV 다운로드
+                # [수정] 일자별 CSV 다운로드 key에 상위 key prefix 포함
                 csv_bytes = pd.concat(
                     [ag_total_df[[c for c in show_cols_exp if c in ag_total_df.columns]],
                      out_date[show_cols_exp]], ignore_index=True
                 ).to_csv(index=False).encode("utf-8-sig")
-                ag_safe = re.sub(r"[^\w]", "_", ag_name)[:30]
                 st.download_button(
                     "📥 CSV", data=csv_bytes,
                     file_name=f"adgroup_{ag_safe}_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                    mime="text/csv", key=f"{key}_ag_{ag_safe}_dl")
-
-    # 전체 CSV (합계 모드에서만)
-    if unit == "광고그룹 합계":
-        csv_bytes = out.to_csv(index=False).encode("utf-8-sig")
-        st.download_button("📥 CSV 다운로드", data=csv_bytes,
-                           file_name=f"adgroup_{key}_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                           mime="text/csv", key=f"{key}_ag_dl")
+                    mime="text/csv",
+                    # [핵심 수정] key에 상위 key prefix를 반드시 포함해야 탭 간 중복 방지
+                    key=f"{key}_ag_{ag_safe}_dl")
 
 
 # ============ 광고 소재 탭 ============
@@ -1086,6 +1090,127 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True):
         fig.update_layout(height=400, hovermode="x unified", margin=dict(l=10, r=10, t=20, b=20))
         st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_daily_chart")
 
+    # ════════════════════════════════════════════════════════
+    # [신규] 일자별 소재 성과 테이블
+    # ════════════════════════════════════════════════════════
+    st.divider()
+    st.subheader("📅 일자별 소재 성과 테이블")
+    st.caption("소재별로 일자 데이터를 펼쳐서 확인할 수 있습니다.")
+
+    # 전체 일자×소재 집계
+    daily_cre_agg = df_f.groupby(["date", "creative"], as_index=False).agg(
+        impressions=("impressions", "sum"),
+        clicks=("clicks", "sum"),
+        cost=("cost", "sum"),
+        conversions=("conversions", "sum") if show_conv else ("clicks", "sum"),
+    )
+    daily_cre_agg["일자"] = pd.to_datetime(daily_cre_agg["date"]).dt.strftime("%Y-%m-%d")
+    daily_cre_agg["CTR (%)"] = daily_cre_agg.apply(
+        lambda r: round(safe_div(r["clicks"], r["impressions"]) * 100, 2), axis=1)
+    daily_cre_agg["CPM (₩)"] = daily_cre_agg.apply(
+        lambda r: round(safe_div(r["cost"], r["impressions"]) * 1000), axis=1)
+    daily_cre_agg["CPC (₩)"] = daily_cre_agg.apply(
+        lambda r: round(safe_div(r["cost"], r["clicks"])), axis=1)
+    if show_conv:
+        daily_cre_agg["CVR (%)"] = daily_cre_agg.apply(
+            lambda r: round(safe_div(r["conversions"], r["clicks"]) * 100, 2), axis=1)
+        daily_cre_agg[f"{conv_label} (₩)"] = daily_cre_agg.apply(
+            lambda r: round(safe_div(r["cost"], r["conversions"])) if r["conversions"] else 0, axis=1)
+
+    # 소재 목록 — 광고비 내림차순
+    cre_list = (daily_cre_agg.groupby("creative", as_index=False)["cost"].sum()
+                .sort_values("cost", ascending=False)["creative"].tolist())
+
+    for cre_name in cre_list:
+        df_cre_single = daily_cre_agg[daily_cre_agg["creative"] == cre_name].sort_values("일자")
+        cre_cost = float(df_cre_single["cost"].sum())
+        cre_imp  = int(df_cre_single["impressions"].sum())
+
+        cre_safe = re.sub(r"[^\w]", "_", cre_name)[:40]
+        with st.expander(
+            f"🖼️ {cre_name}  (광고비 ₩{cre_cost:,.0f} · 노출 {cre_imp:,})",
+            expanded=False
+        ):
+            # 소재 합계 행
+            cre_tot_clk  = int(df_cre_single["clicks"].sum())
+            cre_tot_cost = float(df_cre_single["cost"].sum())
+            cre_tot_conv = float(df_cre_single["conversions"].sum()) if show_conv else 0
+            cre_total = {
+                "일자": "🔢 합계",
+                "소재": cre_name,
+                "노출": f"{cre_imp:,}",
+                "클릭": f"{cre_tot_clk:,}",
+                "광고비": f"₩{int(cre_tot_cost):,}",
+                "CTR (%)": f"{safe_div(cre_tot_clk, cre_imp)*100:.2f}",
+                "CPM (₩)": f"₩{int(safe_div(cre_tot_cost, cre_imp)*1000):,}",
+                "CPC (₩)": f"₩{int(safe_div(cre_tot_cost, cre_tot_clk)):,}",
+            }
+            if show_conv:
+                cre_total["전환"] = f"{int(cre_tot_conv):,}"
+                cre_total["CVR (%)"] = f"{safe_div(cre_tot_conv, cre_tot_clk)*100:.2f}"
+                cre_total[f"{conv_label} (₩)"] = (
+                    f"₩{int(safe_div(cre_tot_cost, cre_tot_conv)):,}"
+                    if cre_tot_conv else "—")
+
+            # 일자별 행 포맷팅
+            base_daily_cols = ["일자", "노출", "클릭", "광고비", "CTR (%)", "CPM (₩)", "CPC (₩)"]
+            if show_conv:
+                base_daily_cols += ["전환", "CVR (%)", f"{conv_label} (₩)"]
+
+            out_daily = df_cre_single[
+                ["일자", "impressions", "clicks", "cost", "CTR (%)", "CPM (₩)", "CPC (₩)"]
+                + (["conversions", "CVR (%)", f"{conv_label} (₩)"] if show_conv else [])
+            ].copy()
+            out_daily = out_daily.rename(columns={
+                "impressions": "노출", "clicks": "클릭", "cost": "광고비",
+                "conversions": "전환"
+            })
+            # 숫자 포맷
+            for col in out_daily.columns:
+                if col in ["노출", "클릭", "전환"]:
+                    out_daily[col] = out_daily[col].apply(lambda x: f"{int(x):,}")
+                elif col == "광고비" or "(₩)" in col:
+                    out_daily[col] = out_daily[col].apply(lambda x: f"₩{int(x):,}")
+
+            # 합계 + 일자별 표시
+            total_show_cols = [c for c in base_daily_cols if c in cre_total]
+            cre_total_df = pd.DataFrame([{c: cre_total.get(c, "") for c in base_daily_cols}])
+            st.dataframe(cre_total_df, use_container_width=True, hide_index=True)
+            st.dataframe(
+                out_daily[[c for c in base_daily_cols if c in out_daily.columns]],
+                use_container_width=True, hide_index=True
+            )
+
+            # CSV 다운로드 — key에 key_prefix + cre_safe 포함
+            csv_out = pd.concat([cre_total_df, out_daily], ignore_index=True)
+            csv_bytes = csv_out.to_csv(index=False).encode("utf-8-sig")
+            st.download_button(
+                "📥 CSV",
+                data=csv_bytes,
+                file_name=f"creative_{cre_safe}_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                mime="text/csv",
+                key=f"{key_prefix}_cre_daily_{cre_safe}_dl",
+            )
+
+    # 전체 일자×소재 CSV 다운로드
+    st.markdown("---")
+    export_cols = ["일자", "creative", "impressions", "clicks", "cost", "CTR (%)", "CPM (₩)", "CPC (₩)"]
+    if show_conv:
+        export_cols += ["conversions", "CVR (%)", f"{conv_label} (₩)"]
+    export_cols = [c for c in export_cols if c in daily_cre_agg.columns]
+    export_df = daily_cre_agg[export_cols].rename(columns={
+        "creative": "소재", "impressions": "노출", "clicks": "클릭",
+        "cost": "광고비", "conversions": "전환"
+    }).sort_values(["일자", "광고비"], ascending=[True, False])
+    csv_all = export_df.to_csv(index=False).encode("utf-8-sig")
+    st.download_button(
+        "📥 전체 일자×소재 CSV 다운로드",
+        data=csv_all,
+        file_name=f"creative_daily_{platform}_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+        mime="text/csv",
+        key=f"{key_prefix}_cre_daily_all_dl",
+    )
+
 
 # ============================================================
 # 페이지 라우팅
@@ -1185,7 +1310,29 @@ if page == "📈 대시보드" and adv_code:
                 with cc2: chart_campaign_bar(df_s, "cost", "캠페인별 광고비 TOP 10")
                 st.divider()
                 st.subheader("📋 캠페인별 효율")
-                render_campaign_table(df_s, conv_label, key="sum_camp", show_conversion=show_conv)
+
+                # [수정] Summary 탭도 매체별 퍼널을 합산하여 render_campaign_table에 전달
+                # 각 매체의 퍼널 단계를 수집하여 df_s에 적용
+                summary_funnel_steps = []
+                seen_labels = set()
+                for pf in sel_pfs:
+                    pf_steps = get_funnel_steps(adv_code, pf)
+                    for step in pf_steps:
+                        if step["label"] not in seen_labels:
+                            summary_funnel_steps.append(step)
+                            seen_labels.add(step["label"])
+
+                if summary_funnel_steps:
+                    st.caption(
+                        f"🪜 퍼널 포함: "
+                        f"{' → '.join([s['label'] for s in sorted(summary_funnel_steps, key=lambda x: x['order'])])}"
+                    )
+
+                render_campaign_table(
+                    df_s, conv_label, key="sum_camp",
+                    show_conversion=show_conv,
+                    funnel_steps=summary_funnel_steps if summary_funnel_steps else None
+                )
 
     # ── Google ───────────────────────────────────────────
     if "google" in tabd:
