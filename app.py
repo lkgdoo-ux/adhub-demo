@@ -817,14 +817,7 @@ def render_campaign_table(df, conv_label, key, show_conversion=True, funnel_step
             ["일자","광고비"], ascending=[True, False])
 
     show = show.copy()
-    funnel_labels = [s["label"] for s in funnel_steps] if funnel_steps else []
-    plain_int_cols = ["노출","클릭"] + (["전환"] if show_conversion else []) + funnel_labels
-    for col in show.columns:
-        if col in plain_int_cols:
-            show[col] = show[col].apply(lambda x: f"{int(x):,}" if pd.notna(x) else "—")
-        elif col == "광고비" or ("(₩)" in col):
-            show[col] = show[col].apply(lambda x: f"₩{int(x):,}" if pd.notna(x) else "—")
-
+    
     total_row = {"캠페인": "🔢 Total"}
     if unit == "일자별":
         total_row["일자"] = ""
@@ -857,8 +850,26 @@ def render_campaign_table(df, conv_label, key, show_conversion=True, funnel_step
     total_df = pd.DataFrame([total_row])
     total_df = total_df[[c for c in show.columns if c in total_df.columns]]
 
+    funnel_labels = [s["label"] for s in funnel_steps] if funnel_steps else []
+    funnel_cvr_cols = [f"CVR·{s['label']}" for s in funnel_steps] if funnel_steps else []
+    funnel_cpa_cols = [f"CPA·{s['label']}" for s in funnel_steps] if funnel_steps else []
+
+    col_config = {
+        "노출":      st.column_config.NumberColumn("노출",     format="%d"),
+        "클릭":      st.column_config.NumberColumn("클릭",     format="%d"),
+        "광고비":    st.column_config.NumberColumn("광고비",   format="₩%d"),
+        "CTR (%)":  st.column_config.NumberColumn("CTR (%)", format="%.2f"),
+        "CPM (₩)":  st.column_config.NumberColumn("CPM (₩)", format="₩%d"),
+        "CPC (₩)":  st.column_config.NumberColumn("CPC (₩)", format="₩%d"),
+    }
+    if show_conversion:
+        col_config["전환"] = st.column_config.NumberColumn("전환", format="%d")
+        col_config[f"{conv_label} (₩)"] = st.column_config.NumberColumn(f"{conv_label} (₩)", format="₩%d")
+    for lbl in funnel_labels:
+        col_config[lbl] = st.column_config.NumberColumn(lbl, format="%d")
+
     st.dataframe(total_df, use_container_width=True, hide_index=True)
-    st.dataframe(show, use_container_width=True, hide_index=True)
+    st.dataframe(show, use_container_width=True, hide_index=True, column_config=col_config)
 
 
 # ============ 광고그룹 테이블 ============
@@ -895,12 +906,6 @@ def render_adgroup_table(df, conv_label, key, show_conversion=True, funnel_steps
         show_cols = id_cols + base_cols + metric_cols + extra_cols
         show_cols = [c for c in show_cols if c in g.columns]
         out = g[show_cols].copy()
-        plain_int = ["노출","클릭"] + (["전환"] if show_conversion else []) + funnel_labels
-        for col in out.columns:
-            if col in plain_int:
-                out[col] = out[col].apply(lambda x: f"{int(x):,}")
-            elif col == "광고비" or ("(₩)" in col):
-                out[col] = out[col].apply(lambda x: f"₩{int(x):,}" if pd.notna(x) else "—")
         return out
 
     def _make_total_row(df_src, id_val_dict):
@@ -936,8 +941,23 @@ def render_adgroup_table(df, conv_label, key, show_conversion=True, funnel_steps
         total_row = _make_total_row(df_f, {"광고그룹": "🔢 Total"})
         total_df  = pd.DataFrame([total_row])
         total_df  = total_df[[c for c in out.columns if c in total_df.columns]]
+
+        ag_col_config = {
+            "노출":      st.column_config.NumberColumn("노출",     format="%d"),
+            "클릭":      st.column_config.NumberColumn("클릭",     format="%d"),
+            "광고비":    st.column_config.NumberColumn("광고비",   format="₩%d"),
+            "CTR (%)":  st.column_config.NumberColumn("CTR (%)", format="%.2f"),
+            "CPM (₩)":  st.column_config.NumberColumn("CPM (₩)", format="₩%d"),
+            "CPC (₩)":  st.column_config.NumberColumn("CPC (₩)", format="₩%d"),
+        }
+        if show_conversion:
+            ag_col_config["전환"] = st.column_config.NumberColumn("전환", format="%d")
+            ag_col_config[f"{conv_label} (₩)"] = st.column_config.NumberColumn(f"{conv_label} (₩)", format="₩%d")
+        for lbl in funnel_labels:
+            ag_col_config[lbl] = st.column_config.NumberColumn(lbl, format="%d")
+
         st.dataframe(total_df, use_container_width=True, hide_index=True)
-        st.dataframe(out, use_container_width=True, hide_index=True)
+        st.dataframe(out, use_container_width=True, hide_index=True, column_config=ag_col_config)
 
     else:
         total_row = _make_total_row(df_f, {"광고그룹": "🔢 Total", "일자": ""})
@@ -980,7 +1000,7 @@ def render_adgroup_table(df, conv_label, key, show_conversion=True, funnel_steps
                 ag_total_df = ag_total_df[[c for c in all_cols_total if c in ag_total_df.columns]]
 
                 st.dataframe(ag_total_df, use_container_width=True, hide_index=True)
-                st.dataframe(out_date[show_cols_exp], use_container_width=True, hide_index=True)
+                st.dataframe(out_date[show_cols_exp], use_container_width=True, hide_index=True, column_config=ag_col_config)
 
 
 # ============================================================
@@ -1168,13 +1188,22 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True,
         cols_show = base_cols + funnel_labels + funnel_cvr_cols + funnel_cpa_cols
 
     show = g[cols_show].rename(columns={"creative": "소재"}).sort_values("광고비", ascending=False)
-    plain_int = ["노출", "클릭", "전환"] + funnel_labels
-    for col in show.columns:
-        if col in plain_int:
-            show[col] = show[col].apply(lambda x: f"{int(x):,}")
-        elif col == "광고비" or ("(₩)" in col and "CVR" not in col and "CPA·" not in col):
-            show[col] = show[col].apply(lambda x: f"₩{int(x):,}")
-    st.dataframe(show, use_container_width=True, hide_index=True)
+    cre_col_config = {
+        "노출":      st.column_config.NumberColumn("노출",     format="%d"),
+        "클릭":      st.column_config.NumberColumn("클릭",     format="%d"),
+        "광고비":    st.column_config.NumberColumn("광고비",   format="₩%d"),
+        "CTR (%)":  st.column_config.NumberColumn("CTR (%)", format="%.2f"),
+        "CPM (₩)":  st.column_config.NumberColumn("CPM (₩)", format="₩%d"),
+        "CPC (₩)":  st.column_config.NumberColumn("CPC (₩)", format="₩%d"),
+    }
+    if show_conv:
+        cre_col_config["전환"] = st.column_config.NumberColumn("전환", format="%d")
+        cre_col_config["CVR (%)"] = st.column_config.NumberColumn("CVR (%)", format="%.2f")
+        cre_col_config[f"{conv_label} (₩)"] = st.column_config.NumberColumn(f"{conv_label} (₩)", format="₩%d")
+    for lbl in funnel_labels:
+        cre_col_config[lbl] = st.column_config.NumberColumn(lbl, format="%d")
+
+    st.dataframe(show, use_container_width=True, hide_index=True, column_config=cre_col_config)
     st.divider()
 
     cc1, cc2 = st.columns(2)
