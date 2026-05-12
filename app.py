@@ -1051,20 +1051,25 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True):
         g["클릭"]    = g["clicks"]
 
         base_cols = ["creative","노출","클릭","광고비","CTR (%)","CPM (₩)","CPC (₩)"]
+    funnel_labels    = [s["label"] for s in sorted(funnel_steps, key=lambda x: x["order"])] if funnel_steps else []
+    funnel_cvr_cols  = [f"CVR·{s['label']}" for s in sorted(funnel_steps, key=lambda x: x["order"])] if funnel_steps else []
+    funnel_cpa_cols  = [f"CPA·{s['label']}" for s in sorted(funnel_steps, key=lambda x: x["order"])] if funnel_steps else []
+
     if show_conv:
-        g["전환"] = g["conversions"].astype(int)
-        g["CVR (%)"] = g.apply(lambda r: round(safe_div(r["conversions"], r["clicks"])*100, 2), axis=1)
+        g["전환"]        = g["conversions"].astype(int)
+        g["CVR (%)"]    = g.apply(lambda r: round(safe_div(r["conversions"], r["clicks"])*100, 2), axis=1)
         g[f"{conv_label} (₩)"] = g.apply(
             lambda r: round(safe_div(r["cost"], r["conversions"])) if r["conversions"] else 0, axis=1)
-        cols_show = base_cols + ["전환","CVR (%)",f"{conv_label} (₩)"]
+        cols_show = base_cols + ["전환","CVR (%)",f"{conv_label} (₩)"] + funnel_labels + funnel_cvr_cols + funnel_cpa_cols
     else:
-        cols_show = base_cols
+        cols_show = base_cols + funnel_labels + funnel_cvr_cols + funnel_cpa_cols
 
     show = g[cols_show].rename(columns={"creative":"소재"}).sort_values("광고비", ascending=False)
+    plain_int = ["노출","클릭","전환"] + funnel_labels
     for col in show.columns:
-        if col in ["노출","클릭","전환"]:
+        if col in plain_int:
             show[col] = show[col].apply(lambda x: f"{int(x):,}")
-        elif col == "광고비" or "(₩)" in col:
+        elif col == "광고비" or ("(₩)" in col and "CVR" not in col and "CPA·" not in col):
             show[col] = show[col].apply(lambda x: f"₩{int(x):,}")
     st.dataframe(show, use_container_width=True, hide_index=True)
     st.divider()
@@ -1115,19 +1120,31 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True):
     st.caption("소재별로 일자 데이터를 펼쳐서 확인할 수 있습니다.")
 
     # 전체 일자×소재 집계
-    daily_cre_agg = df_f.groupby(["date", "creative"], as_index=False).agg(
-        impressions=("impressions", "sum"),
-        clicks=("clicks", "sum"),
-        cost=("cost", "sum"),
-        conversions=("conversions", "sum") if show_conv else ("clicks", "sum"),
-    )
-    daily_cre_agg["일자"] = pd.to_datetime(daily_cre_agg["date"]).dt.strftime("%Y-%m-%d")
-    daily_cre_agg["CTR (%)"] = daily_cre_agg.apply(
-        lambda r: round(safe_div(r["clicks"], r["impressions"]) * 100, 2), axis=1)
-    daily_cre_agg["CPM (₩)"] = daily_cre_agg.apply(
-        lambda r: round(safe_div(r["cost"], r["impressions"]) * 1000), axis=1)
-    daily_cre_agg["CPC (₩)"] = daily_cre_agg.apply(
-        lambda r: round(safe_div(r["cost"], r["clicks"])), axis=1)
+    daily_funnel_agg = {}
+    if funnel_steps:
+        for step in funnel_steps:
+            k = f"_funnel_{step['order']}"
+            if k in df_f_funnel.columns:
+                daily_funnel_agg[k] = (k, "sum")
+
+    daily_cre_agg = df_f_funnel.groupby(["date", "creative"], as_index=False).agg(**{
+        "impressions": ("impressions", "sum"),
+        "clicks":      ("clicks", "sum"),
+        "cost":        ("cost", "sum"),
+        **({} if not show_conv else {"conversions": ("conversions", "sum")}),
+        **daily_funnel_agg,
+    })
+
+    if funnel_steps:
+        daily_cre_agg = _build_funnel_agg_cols(daily_cre_agg, funnel_steps)
+        daily_cre_agg = _add_funnel_rate_cols(daily_cre_agg, funnel_steps)
+        daily_cre_agg["일자"] = pd.to_datetime(daily_cre_agg["date"]).dt.strftime("%Y-%m-%d")
+        daily_cre_agg["CTR (%)"] = daily_cre_agg.apply(
+            lambda r: round(safe_div(r["clicks"], r["impressions"]) * 100, 2), axis=1)
+        daily_cre_agg["CPM (₩)"] = daily_cre_agg.apply(
+            lambda r: round(safe_div(r["cost"], r["impressions"]) * 1000), axis=1)
+        daily_cre_agg["CPC (₩)"] = daily_cre_agg.apply(
+            lambda r: round(safe_div(r["cost"], r["clicks"])), axis=1)
     if show_conv:
         daily_cre_agg["CVR (%)"] = daily_cre_agg.apply(
             lambda r: round(safe_div(r["conversions"], r["clicks"]) * 100, 2), axis=1)
@@ -1173,6 +1190,14 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True):
             base_daily_cols = ["일자", "노출", "클릭", "광고비", "CTR (%)", "CPM (₩)", "CPC (₩)"]
             if show_conv:
                 base_daily_cols += ["전환", "CVR (%)", f"{conv_label} (₩)"]
+            base_daily_cols += funnel_labels + funnel_cvr_cols + funnel_cpa_cols
+            if funnel_steps:
+                for step in sorted(funnel_steps, key=lambda x: x["order"]):
+                    k = f"_funnel_{step['order']}"
+                    tot_s = float(df_cre_single[step["label"]].sum()) if step["label"] in df_cre_single.columns else 0
+                    cre_total[step["label"]]          = f"{int(tot_s):,}"
+                    cre_total[f"CVR·{step['label']}"] = f"{safe_div(tot_s, cre_tot_clk)*100:.1f}%" if cre_tot_clk else "—"
+                    cre_total[f"CPA·{step['label']}"] = f"₩{int(safe_div(cre_tot_cost, tot_s)):,}" if tot_s else "—"
 
             out_daily = df_cre_single[
                 ["일자", "impressions", "clicks", "cost", "CTR (%)", "CPM (₩)", "CPC (₩)"]
@@ -1183,10 +1208,11 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True):
                 "conversions": "전환"
             })
             # 숫자 포맷
+            plain_int_daily = ["노출", "클릭", "전환"] + funnel_labels
             for col in out_daily.columns:
-                if col in ["노출", "클릭", "전환"]:
+                if col in plain_int_daily:
                     out_daily[col] = out_daily[col].apply(lambda x: f"{int(x):,}")
-                elif col == "광고비" or "(₩)" in col:
+                elif col == "광고비" or ("(₩)" in col and "CVR" not in col and "CPA·" not in col):
                     out_daily[col] = out_daily[col].apply(lambda x: f"₩{int(x):,}")
 
             # 합계 + 일자별 표시
@@ -1390,7 +1416,10 @@ if page == "📈 대시보드" and adv_code:
     if "google_cre" in tabd:
         with tabd["google_cre"]:
             df_g = df_all[df_all["platform"] == "GOOGLE"]
-            render_creative_tab(df_g, "GOOGLE", key_prefix="g_cre", show_conv=show_conv)
+            funnel_steps_g = get_funnel_steps(adv_code, "GOOGLE")  # 추가
+            render_creative_tab(df_g, "GOOGLE", key_prefix="g_cre", show_conv=show_conv,
+                                funnel_steps=funnel_steps_g)        # 추가
+
 
     # ── Facebook ──────────────────────────────────────────
     if "facebook" in tabd:
@@ -1431,7 +1460,9 @@ if page == "📈 대시보드" and adv_code:
     if "facebook_cre" in tabd:
         with tabd["facebook_cre"]:
             df_f2 = df_all[df_all["platform"] == "FACEBOOK"]
-            render_creative_tab(df_f2, "FACEBOOK", key_prefix="f_cre", show_conv=show_conv)
+            funnel_steps_f = get_funnel_steps(adv_code, "FACEBOOK")  # 추가
+            render_creative_tab(df_f2, "FACEBOOK", key_prefix="f_cre", show_conv=show_conv,
+                                funnel_steps=funnel_steps_f)          # 추가
 
 # ============ 데이터 업로드 ============
 elif page == "📤 데이터 업로드" and adv_code:
