@@ -1023,17 +1023,34 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True):
 
     st.divider()
     st.subheader("🎨 소재별 성과")
-    g = df_f.groupby("creative", as_index=False).agg(
-        impressions=("impressions","sum"), clicks=("clicks","sum"),
-        cost=("cost","sum"), conversions=("conversions","sum") if show_conv else ("clicks","sum"))
-    g["CTR (%)"] = g.apply(lambda r: round(safe_div(r["clicks"], r["impressions"])*100, 2), axis=1)
-    g["CPM (₩)"] = g.apply(lambda r: round(safe_div(r["cost"],   r["impressions"])*1000), axis=1)
-    g["CPC (₩)"] = g.apply(lambda r: round(safe_div(r["cost"],   r["clicks"])),            axis=1)
-    g["광고비"]  = g["cost"].astype(int)
-    g["노출"]    = g["impressions"]
-    g["클릭"]    = g["clicks"]
+    df_f_funnel = _add_funnel_cols_to_df(df_f, funnel_steps) if funnel_steps else df_f
 
-    base_cols = ["creative","노출","클릭","광고비","CTR (%)","CPM (₩)","CPC (₩)"]
+    funnel_agg = {}
+    if funnel_steps:
+        for step in funnel_steps:
+            k = f"_funnel_{step['order']}"
+            if k in df_f_funnel.columns:
+                funnel_agg[k] = (k, "sum")
+
+    g = df_f_funnel.groupby("creative", as_index=False).agg(**{
+        "impressions": ("impressions","sum"),
+        "clicks":      ("clicks","sum"),
+        "cost":        ("cost","sum"),
+        **({} if not show_conv else {"conversions": ("conversions","sum")}),
+        **funnel_agg,
+    })
+
+    if funnel_steps:
+        g = _build_funnel_agg_cols(g, funnel_steps)
+        g = _add_funnel_rate_cols(g, funnel_steps)
+        g["CTR (%)"] = g.apply(lambda r: round(safe_div(r["clicks"], r["impressions"])*100, 2), axis=1)
+        g["CPM (₩)"] = g.apply(lambda r: round(safe_div(r["cost"],   r["impressions"])*1000), axis=1)
+        g["CPC (₩)"] = g.apply(lambda r: round(safe_div(r["cost"],   r["clicks"])),            axis=1)
+        g["광고비"]  = g["cost"].astype(int)
+        g["노출"]    = g["impressions"]
+        g["클릭"]    = g["clicks"]
+
+        base_cols = ["creative","노출","클릭","광고비","CTR (%)","CPM (₩)","CPC (₩)"]
     if show_conv:
         g["전환"] = g["conversions"].astype(int)
         g["CVR (%)"] = g.apply(lambda r: round(safe_div(r["conversions"], r["clicks"])*100, 2), axis=1)
