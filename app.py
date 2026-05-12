@@ -50,9 +50,9 @@ def safe_div(a, b):
 
 # ============ 열 그룹 색상 스타일러 ============
 _COL_GROUP_COLORS = {
-    "cost_group":  "#FFF3E0",   # 연한 주황 — 광고비
-    "eff_group":   "#E8F5E9",   # 연한 초록 — CTR/CPC
-    "conv_group":  "#EDE7F6",   # 연한 보라 — 구매/CVR/CPA
+    "cost_group":  "#FFF3E0",
+    "eff_group":   "#E8F5E9",
+    "conv_group":  "#EDE7F6",
 }
 
 def _style_col_groups(df: pd.DataFrame, conv_label: str = "CPA") -> pd.io.formats.style.Styler:
@@ -60,7 +60,6 @@ def _style_col_groups(df: pd.DataFrame, conv_label: str = "CPA") -> pd.io.format
     eff_cols  = {"CTR (%)", "CPM (₩)", "CPC (₩)"}
     conv_cols = {f"전환", "CVR (%)", f"{conv_label} (₩)",
                  f"CVR·{conv_label}", f"CPA·{conv_label}"}
-    # CVR·xxx / CPA·xxx 패턴도 포함
     conv_pattern_cols = {c for c in df.columns
                          if c.startswith("CVR·") or c.startswith("CPA·") or c == "CVR (%)"}
 
@@ -159,7 +158,6 @@ def init_db():
             cvr_base TEXT DEFAULT 'clicks'
         )"""))
 
-        # ── 신규: 소재 이미지 저장 테이블 ──────────────────────
         con.execute(text("""
         CREATE TABLE IF NOT EXISTS creative_images (
             id SERIAL PRIMARY KEY,
@@ -217,7 +215,6 @@ def create_viewer_account(adv_code, adv_name):
 
 # ============ 소재 이미지 헬퍼 ============
 def get_creative_images(adv_code, platform):
-    """해당 광고주·매체의 소재 이미지 딕셔너리 반환 {creative_name: (image_data_b64, media_type)}"""
     rows = q("""
         SELECT creative_name, image_data, media_type
         FROM creative_images
@@ -245,7 +242,6 @@ def delete_creative_image(adv_code, platform, creative_name):
     """, (adv_code, platform, creative_name), fetch=False)
 
 def get_distinct_creatives(adv_code, platform):
-    """perf 테이블에서 인식된 소재명 목록 반환"""
     rows = q("""
         SELECT DISTINCT creative FROM perf
         WHERE advertiser_code=? AND platform=?
@@ -847,7 +843,7 @@ def render_campaign_table(df, conv_label, key, show_conversion=True, funnel_step
             ["일자","광고비"], ascending=[True, False])
 
     show = show.copy()
-    
+
     total_row = {"캠페인": "🔢 Total"}
     if unit == "일자별":
         total_row["일자"] = ""
@@ -964,7 +960,6 @@ def render_adgroup_table(df, conv_label, key, show_conversion=True, funnel_steps
                 row[f"CPA·{step['label']}"] = f"₩{int(safe_div(tot_cost, tot_s)):,}" if tot_s else "—"
         return row
 
-    # ★ ag_col_config를 if 블록 바깥에 먼저 정의
     ag_col_config = {
         "노출":      st.column_config.NumberColumn("노출",     format="%,d"),
         "클릭":      st.column_config.NumberColumn("클릭",     format="%,d"),
@@ -1046,12 +1041,6 @@ def render_adgroup_table(df, conv_label, key, show_conversion=True, funnel_steps
 # 소재 이미지 갤러리 렌더러
 # ============================================================
 def render_creative_image_gallery(creative_images_dict, creative_cost_order, key_prefix=""):
-    """
-    소재 이미지 갤러리를 카드 형태로 표시합니다.
-    creative_images_dict: {creative_name: (b64_data, media_type)}
-    creative_cost_order: 광고비 내림차순 소재명 리스트
-    """
-    # 이미지가 등록된 소재만 필터
     creatives_with_img = [c for c in creative_cost_order if c in creative_images_dict]
     creatives_no_img   = [c for c in creative_cost_order if c not in creative_images_dict]
 
@@ -1065,7 +1054,6 @@ def render_creative_image_gallery(creative_images_dict, creative_cost_order, key
         f"미등록 {len(creatives_no_img)}개  |  광고비 내림차순 정렬"
     )
 
-    # 한 행에 표시할 카드 수 선택
     cols_per_row = st.select_slider(
         "한 행에 표시할 소재 수",
         options=[2, 3, 4, 5, 6],
@@ -1073,7 +1061,6 @@ def render_creative_image_gallery(creative_images_dict, creative_cost_order, key
         key=f"{key_prefix}_gallery_cols"
     )
 
-    # 카드 스타일
     card_style = """
         <style>
         .cre-card {
@@ -1108,8 +1095,6 @@ def render_creative_image_gallery(creative_images_dict, creative_cost_order, key
     """
     st.markdown(card_style, unsafe_allow_html=True)
 
-    # 집계 데이터 (비용, CTR 등) 참조용 — 호출부에서 g_summary로 전달받음
-    # 여기서는 이름과 이미지만 표시
     for i in range(0, len(creatives_with_img), cols_per_row):
         chunk = creatives_with_img[i : i + cols_per_row]
         cols  = st.columns(cols_per_row)
@@ -1126,7 +1111,6 @@ def render_creative_image_gallery(creative_images_dict, creative_cost_order, key
                     unsafe_allow_html=True
                 )
 
-    # 미등록 소재 목록 (접을 수 있게)
     if creatives_no_img:
         with st.expander(f"⚠️ 이미지 미등록 소재 {len(creatives_no_img)}개 보기"):
             for nm in creatives_no_img:
@@ -1286,13 +1270,9 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True,
         fig.update_layout(height=400, hovermode="x unified", margin=dict(l=10, r=10, t=20, b=20))
         st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_daily_chart")
 
-    # ══════════════════════════════════════════════════════════
-    # 🖼️ 소재 이미지 갤러리 (그래프와 일자별 테이블 사이)
-    # ══════════════════════════════════════════════════════════
     st.divider()
     if adv_code:
         creative_images = get_creative_images(adv_code, platform)
-        # 광고비 내림차순 소재 목록
         creative_cost_order = g.sort_values("cost", ascending=False)["creative"].tolist()
         render_creative_image_gallery(
             creative_images,
@@ -1302,9 +1282,6 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True,
     else:
         st.info("💡 소재 이미지를 표시하려면 광고주 코드가 필요합니다.")
 
-    # ══════════════════════════════════════════════════════════
-    # 일자별 소재 성과 테이블
-    # ══════════════════════════════════════════════════════════
     st.divider()
     st.subheader("📅 일자별 소재 성과 테이블")
     st.caption("소재별로 일자 데이터를 펼쳐서 확인할 수 있습니다.")
@@ -1345,7 +1322,6 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True,
     cre_list = (daily_cre_agg.groupby("creative", as_index=False)["cost"].sum()
                 .sort_values("cost", ascending=False)["creative"].tolist())
 
-    # 이미지 로드 (expander 타이틀에 이미지 유무 표시용)
     creative_images_for_table = get_creative_images(adv_code, platform) if adv_code else {}
 
     for cre_idx, cre_name in enumerate(cre_list):
@@ -1360,7 +1336,6 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True,
             f"{img_badge}📅 {cre_name}  (광고비 ₩{cre_cost:,.0f} · 노출 {cre_imp:,})",
             expanded=False
         ):
-            # 소재 이미지 (있을 경우 expander 상단에 표시)
             if has_img:
                 b64_data, media_type = creative_images_for_table[cre_name]
                 img_src = f"data:{media_type};base64,{b64_data}"
@@ -1373,7 +1348,7 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True,
                     )
                 with info_col:
                     st.markdown(f"**소재명:** `{cre_name}`")
-                st.markdown("")  # 간격
+                st.markdown("")
 
             cre_tot_clk  = int(df_cre_single["clicks"].sum())
             cre_tot_cost = float(df_cre_single["cost"].sum())
@@ -1437,16 +1412,9 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True,
 
 
 # ============================================================
-# 이미지 업로드 섹션 (데이터 업로드 페이지 내)
+# 이미지 업로드 섹션
 # ============================================================
 def render_image_upload_section(adv_code, user_email, can_edit):
-    """
-    소재 이미지 업로드 UI.
-    - 매체 선택
-    - 인식된 소재명 드롭다운
-    - 이미지 업로더
-    - 등록된 이미지 목록 관리
-    """
     st.subheader("🖼️ 소재 이미지 업로드")
     st.caption("데이터에서 인식된 소재명을 선택하고 이미지를 등록합니다. 등록된 이미지는 광고소재 탭 갤러리에 표시됩니다.")
 
@@ -1461,13 +1429,10 @@ def render_image_upload_section(adv_code, user_email, can_edit):
         st.warning(f"💡 {img_pf} 매체에 인식된 소재명이 없습니다. 먼저 성과 데이터를 업로드하고 소재 컬럼을 매핑해주세요.")
         return
 
-    # 현재 등록된 이미지 로드
     existing_images = get_creative_images(adv_code, img_pf)
 
-    # ── 업로드 폼 ──────────────────────────────────────────
     st.markdown("#### ➕ 이미지 등록/수정")
 
-    # 소재명 선택 (등록 여부 표시)
     def fmt_cre(name):
         badge = "✅ " if name in existing_images else "⬜ "
         return f"{badge}{name}"
@@ -1479,7 +1444,6 @@ def render_image_upload_section(adv_code, user_email, can_edit):
         key="img_sel_creative"
     )
 
-    # 선택된 소재의 기존 이미지 미리보기
     if sel_creative in existing_images:
         st.markdown("**현재 등록된 이미지:**")
         b64_data, media_type = existing_images[sel_creative]
@@ -1500,7 +1464,6 @@ def render_image_upload_section(adv_code, user_email, can_edit):
     )
 
     if uploaded_img:
-        # 업로드된 이미지 미리보기
         st.markdown("**업로드할 이미지 미리보기:**")
         prev2_col, _ = st.columns([1, 3])
         with prev2_col:
@@ -1523,7 +1486,6 @@ def render_image_upload_section(adv_code, user_email, can_edit):
             st.success(f"✅ '{sel_creative}' 이미지 저장 완료!")
             st.rerun()
 
-    # ── 일괄 업로드 ────────────────────────────────────────
     st.divider()
     st.markdown("#### 📦 파일명으로 일괄 업로드")
     st.caption(
@@ -1555,7 +1517,6 @@ def render_image_upload_section(adv_code, user_email, can_edit):
         st.markdown(f"**매핑 결과:** 자동 매핑 {len(matched)}개 · 미매핑 {len(unmatched)}개")
 
         if matched:
-            # 미리보기 (최대 6개)
             preview_cols = st.columns(min(len(matched), 4))
             for idx, (f, cname) in enumerate(matched[:4]):
                 with preview_cols[idx]:
@@ -1585,7 +1546,6 @@ def render_image_upload_section(adv_code, user_email, can_edit):
                     st.markdown(f"- `{nm}`")
                 st.caption("파일명(확장자 제외)이 위의 소재명 목록과 정확히 일치해야 합니다.")
 
-    # ── 등록된 이미지 목록 ──────────────────────────────────
     st.divider()
     st.markdown("#### 📋 등록된 이미지 목록")
 
@@ -1596,7 +1556,6 @@ def render_image_upload_section(adv_code, user_email, can_edit):
 
     st.caption(f"총 {len(existing_images_fresh)}개 소재 이미지 등록됨")
 
-    # 갤러리 형태로 표시 + 삭제 버튼
     cols_per_row_mgmt = 4
     img_items = list(existing_images_fresh.items())
 
@@ -1821,7 +1780,10 @@ if page == "📈 대시보드" and adv_code:
             render_creative_tab(df_f2, "FACEBOOK", key_prefix="f_cre", show_conv=show_conv,
                                 funnel_steps=funnel_steps_f, adv_code=adv_code)
 
-# ============ 데이터 업로드 ============
+
+# ============================================================
+# ★★★ 데이터 업로드 (핵심 버그 수정 구간) ★★★
+# ============================================================
 elif page == "📤 데이터 업로드" and adv_code:
     st.title("📤 데이터 업로드")
     if my_level == "VIEWER":
@@ -1830,7 +1792,6 @@ elif page == "📤 데이터 업로드" and adv_code:
 
     can_edit = (my_level in ("OWNER", "EDITOR")) or is_admin
 
-    # ── 탭으로 구분: 성과 데이터 / 이미지 업로드 ────────────
     up_tab1, up_tab2 = st.tabs(["📊 성과 데이터 업로드", "🖼️ 소재 이미지 업로드"])
 
     with up_tab1:
@@ -1979,17 +1940,28 @@ elif page == "📤 데이터 업로드" and adv_code:
                     kc[2].metric("총 클릭", f"{int(df['clicks'].sum()):,}")
                     kc[3].metric("총 비용", f"₩{float(df['cost'].sum()):,.0f}")
 
+                    # ─────────────────────────────────────────────────────────
+                    # ★ FIX: 삭제 예정 행 수 조회 — 파라미터 바인딩 사용
+                    # ─────────────────────────────────────────────────────────
                     if mode.startswith("②"):
-                        dates_in_file = list(df["date"].unique())
-                        ph = ",".join(["?" for _ in dates_in_file])
-                        will_delete = q(
-                            f"SELECT COUNT(*) FROM perf WHERE advertiser_code=? AND platform=? AND date IN ({ph})",
-                            (adv_code, platform, *dates_in_file))[0][0]
+                        dates_in_file = sorted(set(df["date"].dropna().tolist()))
+                        if dates_in_file:
+                            placeholders = ",".join([f":d{i}" for i in range(len(dates_in_file))])
+                            date_params  = {f"d{i}": d for i, d in enumerate(dates_in_file)}
+                            will_delete_row = q(
+                                f"SELECT COUNT(*) FROM perf WHERE advertiser_code=? AND platform=? "
+                                f"AND date IN ({placeholders})",
+                                (adv_code, platform, *dates_in_file)
+                            )
+                            will_delete = will_delete_row[0][0] if will_delete_row else 0
+                        else:
+                            will_delete = 0
                         st.warning(f"⚠️ 저장 시 기존 **{will_delete:,}행** 삭제 후 새 **{len(df):,}행**으로 교체됩니다.")
                     elif mode.startswith("③"):
-                        will_delete = q(
+                        will_delete_row = q(
                             "SELECT COUNT(*) FROM perf WHERE advertiser_code=? AND platform=?",
-                            (adv_code, platform))[0][0]
+                            (adv_code, platform))
+                        will_delete = will_delete_row[0][0] if will_delete_row else 0
                         st.error(f"🚨 {platform} 매체 전체 **{will_delete:,}행** 삭제 후 새 **{len(df):,}행**으로 교체됩니다.")
 
                     proceed = True
@@ -2003,70 +1975,118 @@ elif page == "📤 데이터 업로드" and adv_code:
                     btn_label = {"①":"💾 추가 저장","②":"💾 덮어쓰기 저장","③":"🚨 초기화 후 저장"}[mode[0]]
 
                     if st.button(btn_label, type="primary", disabled=not proceed):
-                        with engine.connect() as con:
-                            deleted = 0
-                            if mode.startswith("②"):
-                                dates_in_file = list(df["date"].unique())
-                                ph = ",".join([f"'{d}'" for d in dates_in_file])
-                                r = con.execute(text(
-                                    f"DELETE FROM perf WHERE advertiser_code='{adv_code}' "
-                                    f"AND platform='{platform}' AND date IN ({ph})"))
-                                deleted = r.rowcount
-                            elif mode.startswith("③"):
-                                r = con.execute(text(
-                                    f"DELETE FROM perf WHERE advertiser_code='{adv_code}' "
-                                    f"AND platform='{platform}'"))
-                                deleted = r.rowcount
+                        # ─────────────────────────────────────────────────────
+                        # ★ FIX: DELETE + INSERT를 단일 트랜잭션으로 처리
+                        #        파라미터 바인딩으로 SQL injection 및 타입 불일치 방지
+                        # ─────────────────────────────────────────────────────
+                        try:
+                            with engine.connect() as con:
+                                deleted = 0
 
-                            r2 = con.execute(text("""
-                                INSERT INTO upload_log
-                                    (email, advertiser_code, platform, file_name, rows,
-                                    uploaded_at, upload_mode, deleted_rows)
-                                VALUES (:email,:adv,:pf,:fn,:rows,:ts,:mode,:deleted_rows)
-                                RETURNING id
-                            """), dict(email=user["email"], adv=adv_code, pf=platform,
-                                       fn=file.name, rows=len(df),
-                                       ts=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                       mode=mode, deleted_rows=deleted))
-                            upload_id = r2.fetchone()[0]
+                                if mode.startswith("②"):
+                                    # 파일 내 날짜 목록을 파라미터로 바인딩
+                                    dates_in_file = sorted(set(df["date"].dropna().tolist()))
+                                    if dates_in_file:
+                                        placeholders = ",".join(
+                                            [f":del_d{i}" for i in range(len(dates_in_file))])
+                                        del_params = {
+                                            "adv": adv_code, "pf": platform,
+                                            **{f"del_d{i}": d for i, d in enumerate(dates_in_file)}
+                                        }
+                                        result = con.execute(text(
+                                            f"DELETE FROM perf "
+                                            f"WHERE advertiser_code = :adv "
+                                            f"AND platform = :pf "
+                                            f"AND date IN ({placeholders})"
+                                        ), del_params)
+                                        deleted = result.rowcount
 
-                            rows_to_insert = []
-                            for _, row in df.iterrows():
-                                cre_val = row["creative"] if ("creative" in df.columns and pd.notna(row["creative"])) else None
-                                rows_to_insert.append(dict(
-                                    adv=adv_code, pf=platform,
-                                    date=row["date"], camp=row["campaign"], ag=row["adgroup"],
-                                    imp=int(row["impressions"]), clk=int(row["clicks"]),
-                                    cost=float(row["cost"]), raw=row["raw_data"],
-                                    uid=upload_id, cre=cre_val))
+                                elif mode.startswith("③"):
+                                    result = con.execute(text(
+                                        "DELETE FROM perf "
+                                        "WHERE advertiser_code = :adv AND platform = :pf"
+                                    ), {"adv": adv_code, "pf": platform})
+                                    deleted = result.rowcount
 
-                            con.execute(text("""
-                                INSERT INTO perf
-                                    (advertiser_code, platform, date, campaign, adgroup,
-                                     impressions, clicks, cost, raw_data, upload_log_id, creative)
-                                VALUES
-                                    (:adv, :pf, :date, :camp, :ag,
-                                     :imp, :clk, :cost, :raw, :uid, :cre)
-                            """), rows_to_insert)
+                                # upload_log 먼저 삽입해서 upload_log_id 확보
+                                result2 = con.execute(text("""
+                                    INSERT INTO upload_log
+                                        (email, advertiser_code, platform, file_name, rows,
+                                         uploaded_at, upload_mode, deleted_rows)
+                                    VALUES
+                                        (:email, :adv, :pf, :fn, :rows, :ts, :mode, :deleted_rows)
+                                    RETURNING id
+                                """), {
+                                    "email": user["email"],
+                                    "adv":   adv_code,
+                                    "pf":    platform,
+                                    "fn":    file.name,
+                                    "rows":  len(df),
+                                    "ts":    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                    "mode":  mode,
+                                    "deleted_rows": deleted
+                                })
+                                upload_id = result2.fetchone()[0]
 
-                            con.commit()
+                                # 행 단위 INSERT (upload_log_id 반드시 포함)
+                                rows_to_insert = []
+                                for _, row in df.iterrows():
+                                    cre_val = (
+                                        row["creative"]
+                                        if "creative" in df.columns and pd.notna(row["creative"])
+                                        else None
+                                    )
+                                    rows_to_insert.append({
+                                        "adv":  adv_code,
+                                        "pf":   platform,
+                                        "date": row["date"],
+                                        "camp": row["campaign"],
+                                        "ag":   row["adgroup"],
+                                        "imp":  int(row["impressions"]),
+                                        "clk":  int(row["clicks"]),
+                                        "cost": float(row["cost"]),
+                                        "raw":  row["raw_data"],
+                                        "uid":  upload_id,   # ★ 반드시 upload_log_id 설정
+                                        "cre":  cre_val,
+                                    })
 
-                        msg = f"🎉 완료! 기존 {deleted:,}행 삭제 → 새 {len(df):,}행 저장" if deleted else f"🎉 {len(df):,}행 저장 완료!"
-                        st.success(msg)
-                        for k in ["upload_df","upload_other","up_sig"]:
-                            if k in st.session_state:
-                                del st.session_state[k]
-                        st.balloons()
+                                con.execute(text("""
+                                    INSERT INTO perf
+                                        (advertiser_code, platform, date, campaign, adgroup,
+                                         impressions, clicks, cost, raw_data, upload_log_id, creative)
+                                    VALUES
+                                        (:adv, :pf, :date, :camp, :ag,
+                                         :imp, :clk, :cost, :raw, :uid, :cre)
+                                """), rows_to_insert)
+
+                                # ★ 단일 commit — DELETE + INSERT 원자적 처리
+                                con.commit()
+
+                            msg = (
+                                f"🎉 완료! 기존 {deleted:,}행 삭제 → 새 {len(df):,}행 저장"
+                                if deleted else f"🎉 {len(df):,}행 저장 완료!"
+                            )
+                            st.success(msg)
+                            for k in ["upload_df","upload_other","up_sig"]:
+                                if k in st.session_state:
+                                    del st.session_state[k]
+                            st.balloons()
+
+                        except Exception as e:
+                            st.error(f"❌ 저장 실패 (트랜잭션 롤백됨): {e}")
+                            import traceback; st.code(traceback.format_exc())
 
             except Exception as e:
                 st.error(f"파일 처리 오류: {e}")
                 import traceback; st.code(traceback.format_exc())
 
-    # ── 이미지 업로드 탭 ──────────────────────────────────
     with up_tab2:
         render_image_upload_section(adv_code, user["email"], can_edit)
 
-# ============ 업로드 이력 ============
+
+# ============================================================
+# ★★★ 업로드 이력 (핵심 버그 수정 구간) ★★★
+# ============================================================
 elif page == "📋 업로드 이력" and adv_code:
     st.title("📋 업로드 이력")
     st.caption("각 업로드 행 우측의 🗑️ 버튼으로 개별 삭제할 수 있습니다.")
@@ -2083,13 +2103,17 @@ elif page == "📋 업로드 이력" and adv_code:
 
     can_delete = (my_level in ("OWNER","EDITOR")) or is_admin
 
+    # legacy 이력 수 집계 (플랫폼별)
     legacy_count_per_pf = {}
     for row in logs_raw:
         if row[6] == "(legacy)":
             legacy_count_per_pf[row[3]] = legacy_count_per_pf.get(row[3], 0) + 1
 
+    # 헤더
     h = st.columns([0.7, 1.8, 2.4, 1, 2.6, 0.9, 1.4, 0.7])
-    for label, col in zip(["**ID**","**업로드 시각**","**사용자**","**매체**","**파일명**","**현재 행수**","**모드**","**삭제**"], h):
+    for label, col in zip(
+        ["**ID**","**업로드 시각**","**사용자**","**매체**","**파일명**","**현재 행수**","**모드**","**삭제**"], h
+    ):
         col.markdown(label)
     st.markdown("<hr style='margin:4px 0;border-color:#e5e7eb'>", unsafe_allow_html=True)
 
@@ -2102,7 +2126,9 @@ elif page == "📋 업로드 이력" and adv_code:
                          (adv_code, pf))[0][0]
             unresolvable = legacy_count_per_pf.get(pf, 0) > 1
         else:
-            cur_rows = q("SELECT COUNT(*) FROM perf WHERE upload_log_id=?", (log_id,))[0][0]
+            # ★ FIX: upload_log_id로 정확히 조회
+            cur_rows_r = q("SELECT COUNT(*) FROM perf WHERE upload_log_id=?", (log_id,))
+            cur_rows = cur_rows_r[0][0] if cur_rows_r else 0
             unresolvable = False
 
         c = st.columns([0.7, 1.8, 2.4, 1, 2.6, 0.9, 1.4, 0.7])
@@ -2113,8 +2139,8 @@ elif page == "📋 업로드 이력" and adv_code:
         fname_short = fname if len(fname) <= 28 else fname[:25] + "..."
         c[4].markdown(f"<span style='font-size:13px' title='{fname}'>{fname_short}</span>", unsafe_allow_html=True)
         c[5].markdown(f"**{cur_rows:,}**")
-        mode_short = mode_str.replace("(Append)","").replace("(Upsert by Date)","") \
-                             .replace("(Replace All)","").replace(" — 권장","").strip()
+        mode_short = (mode_str.replace("(Append)","").replace("(Upsert by Date)","")
+                              .replace("(Replace All)","").replace(" — 권장","").strip())
         c[6].markdown(f"<span style='font-size:12px'>{mode_short}</span>", unsafe_allow_html=True)
 
         if can_delete:
@@ -2135,7 +2161,7 @@ elif page == "📋 업로드 이력" and adv_code:
             st.session_state.pop("pending_delete", None)
             st.rerun()
 
-        log_id, ts, email, pf, fname, rows, mode_str, _ = sel
+        log_id, ts, email_log, pf, fname, rows, mode_str, _ = sel
 
         if mode_str == "(legacy)":
             cur_rows = q("""SELECT COUNT(*) FROM perf
@@ -2143,7 +2169,8 @@ elif page == "📋 업로드 이력" and adv_code:
                          (adv_code, pf))[0][0]
             unresolvable = legacy_count_per_pf.get(pf, 0) > 1
         else:
-            cur_rows = q("SELECT COUNT(*) FROM perf WHERE upload_log_id=?", (log_id,))[0][0]
+            cur_rows_r = q("SELECT COUNT(*) FROM perf WHERE upload_log_id=?", (log_id,))
+            cur_rows   = cur_rows_r[0][0] if cur_rows_r else 0
             unresolvable = False
 
         st.divider()
@@ -2153,10 +2180,10 @@ elif page == "📋 업로드 이력" and adv_code:
             <strong>🗑️ 삭제 확인 — 업로드 #{log_id}</strong><br><br>
             <ul style='margin:0;padding-left:20px;font-size:14px'>
               <li>업로드 시각: <code>{ts}</code></li>
-              <li>업로더: <code>{email}</code></li>
+              <li>업로더: <code>{email_log}</code></li>
               <li>매체: <code>{pf}</code> · 파일명: <code>{fname}</code></li>
               <li>등록 시 저장행수: <code>{rows:,}행</code></li>
-              <li><strong>현재 DB 잔여 행수: {cur_rows:,}행</strong></li>
+              <li><strong>현재 DB 잔여 행수: {cur_rows:,}행</strong> (이 행이 DB에서 완전히 삭제됩니다)</li>
             </ul></div>""",
             unsafe_allow_html=True)
 
@@ -2174,25 +2201,50 @@ elif page == "📋 업로드 이력" and adv_code:
         else:
             if cur_rows == 0:
                 st.info("💡 데이터는 이미 비어있습니다. 이력 레코드만 제거됩니다.")
+
             cc1, cc2, _ = st.columns([1, 1, 4])
             with cc1:
                 if st.button("✅ 삭제 확정", type="primary", key=f"confirm_{pid}"):
-                    with engine.connect() as con:
-                        if mode_str == "(legacy)":
-                            r = con.execute(text(
-                                "DELETE FROM perf WHERE advertiser_code=:adv AND platform=:pf "
-                                "AND upload_log_id IS NULL"),
-                                {"adv": adv_code, "pf": pf})
-                        else:
-                            r = con.execute(text("DELETE FROM perf WHERE upload_log_id=:id"), {"id": log_id})
-                        deleted = r.rowcount
-                        con.execute(text("DELETE FROM upload_log WHERE id=:id"), {"id": log_id})
-                        con.commit()
-                    st.session_state.pop("pending_delete", None)
-                    st.success(f"✅ {deleted:,}행 + 이력 삭제 완료"); st.rerun()
+                    # ─────────────────────────────────────────────────────
+                    # ★ FIX: perf 데이터 + upload_log 모두 단일 트랜잭션으로 삭제
+                    # ─────────────────────────────────────────────────────
+                    try:
+                        with engine.connect() as con:
+                            if mode_str == "(legacy)":
+                                # legacy: upload_log_id IS NULL인 해당 플랫폼 행 삭제
+                                result = con.execute(text(
+                                    "DELETE FROM perf "
+                                    "WHERE advertiser_code = :adv "
+                                    "AND platform = :pf "
+                                    "AND upload_log_id IS NULL"
+                                ), {"adv": adv_code, "pf": pf})
+                            else:
+                                # ★ 핵심 수정: upload_log_id 기준으로 perf 행 삭제
+                                result = con.execute(text(
+                                    "DELETE FROM perf WHERE upload_log_id = :uid"
+                                ), {"uid": log_id})
+
+                            deleted_cnt = result.rowcount
+
+                            # upload_log 레코드 삭제
+                            con.execute(text(
+                                "DELETE FROM upload_log WHERE id = :uid"
+                            ), {"uid": log_id})
+
+                            con.commit()  # ★ 단일 commit
+
+                        st.session_state.pop("pending_delete", None)
+                        st.success(f"✅ perf {deleted_cnt:,}행 + 이력 레코드 완전 삭제 완료")
+                        st.rerun()
+
+                    except Exception as e:
+                        st.error(f"❌ 삭제 실패 (롤백됨): {e}")
+                        import traceback; st.code(traceback.format_exc())
+
             with cc2:
                 if st.button("❌ 취소", key=f"cancel_{pid}"):
                     st.session_state.pop("pending_delete", None); st.rerun()
+
 
 # ============ 전환지표 설정 ============
 elif page == "🎯 전환지표 설정" and adv_code:
@@ -2389,6 +2441,7 @@ elif page == "🎯 전환지표 설정" and adv_code:
                             out[col] = out[col].apply(lambda x: f"₩{int(x):,}" if pd.notna(x) else "—")
                     st.dataframe(out, use_container_width=True, hide_index=True)
 
+
 # ============ PDF 리포트 ============
 elif page == "📥 PDF 리포트" and adv_code:
     st.title("📥 PDF 리포트 다운로드")
@@ -2457,6 +2510,7 @@ elif page == "📥 PDF 리포트" and adv_code:
             except Exception as e:
                 st.error(f"PDF 생성 실패: {e}")
                 import traceback; st.code(traceback.format_exc())
+
 
 # ============ 광고주 관리 ============
 elif page == "🏢 광고주 관리":
@@ -2549,6 +2603,7 @@ elif page == "🏢 광고주 관리":
                     st.rerun()
                 else:
                     st.error("코드 불일치")
+
 
 # ============ 계정 관리 ============
 elif page == "👤 계정 관리":
