@@ -932,6 +932,21 @@ def render_adgroup_table(df, conv_label, key, show_conversion=True, funnel_steps
                 row[f"CPA·{step['label']}"] = f"₩{int(safe_div(tot_cost, tot_s)):,}" if tot_s else "—"
         return row
 
+    # ★ ag_col_config를 if 블록 바깥에 먼저 정의
+    ag_col_config = {
+        "노출":      st.column_config.NumberColumn("노출",     format="%d"),
+        "클릭":      st.column_config.NumberColumn("클릭",     format="%d"),
+        "광고비":    st.column_config.NumberColumn("광고비",   format="₩%d"),
+        "CTR (%)":  st.column_config.NumberColumn("CTR (%)", format="%.2f"),
+        "CPM (₩)":  st.column_config.NumberColumn("CPM (₩)", format="₩%d"),
+        "CPC (₩)":  st.column_config.NumberColumn("CPC (₩)", format="₩%d"),
+    }
+    if show_conversion:
+        ag_col_config["전환"] = st.column_config.NumberColumn("전환", format="%d")
+        ag_col_config[f"{conv_label} (₩)"] = st.column_config.NumberColumn(f"{conv_label} (₩)", format="₩%d")
+    for lbl in funnel_labels:
+        ag_col_config[lbl] = st.column_config.NumberColumn(lbl, format="%d")
+
     if unit == "광고그룹 합계":
         agg_dict = _make_agg_dict(df_f)
         g = df_f.groupby("adgroup", as_index=False).agg(**agg_dict)
@@ -941,20 +956,6 @@ def render_adgroup_table(df, conv_label, key, show_conversion=True, funnel_steps
         total_row = _make_total_row(df_f, {"광고그룹": "🔢 Total"})
         total_df  = pd.DataFrame([total_row])
         total_df  = total_df[[c for c in out.columns if c in total_df.columns]]
-
-        ag_col_config = {
-            "노출":      st.column_config.NumberColumn("노출",     format="%d"),
-            "클릭":      st.column_config.NumberColumn("클릭",     format="%d"),
-            "광고비":    st.column_config.NumberColumn("광고비",   format="₩%d"),
-            "CTR (%)":  st.column_config.NumberColumn("CTR (%)", format="%.2f"),
-            "CPM (₩)":  st.column_config.NumberColumn("CPM (₩)", format="₩%d"),
-            "CPC (₩)":  st.column_config.NumberColumn("CPC (₩)", format="₩%d"),
-        }
-        if show_conversion:
-            ag_col_config["전환"] = st.column_config.NumberColumn("전환", format="%d")
-            ag_col_config[f"{conv_label} (₩)"] = st.column_config.NumberColumn(f"{conv_label} (₩)", format="₩%d")
-        for lbl in funnel_labels:
-            ag_col_config[lbl] = st.column_config.NumberColumn(lbl, format="%d")
 
         st.dataframe(total_df, use_container_width=True, hide_index=True)
         st.dataframe(out, use_container_width=True, hide_index=True, column_config=ag_col_config)
