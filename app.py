@@ -1667,11 +1667,11 @@ if page == "📈 대시보드" and adv_code:
             else:
                 conv_label = render_kpi(df_s, total_budget, show_conv, key_suffix="sum")
                 st.divider()
-                chart_daily_metric(df_s, conv_label, key_prefix="sum")
-                st.divider()
                 cc1, cc2 = st.columns([1, 2])
                 with cc1: chart_cost_donut(df_s, "매체별 광고비 비중")
                 with cc2: chart_campaign_bar(df_s, "cost", "캠페인별 광고비 TOP 10")
+                st.divider()
+                chart_daily_metric(df_s, conv_label, key_prefix="sum")
                 st.divider()
                 st.subheader("📋 캠페인별 효율")
 
