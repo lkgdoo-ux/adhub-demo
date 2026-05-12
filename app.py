@@ -855,18 +855,18 @@ def render_campaign_table(df, conv_label, key, show_conversion=True, funnel_step
     funnel_cpa_cols = [f"CPA·{s['label']}" for s in funnel_steps] if funnel_steps else []
 
     col_config = {
-        "노출":      st.column_config.NumberColumn("노출",     format="%d"),
-        "클릭":      st.column_config.NumberColumn("클릭",     format="%d"),
-        "광고비":    st.column_config.NumberColumn("광고비",   format="₩%d"),
-        "CTR (%)":  st.column_config.NumberColumn("CTR (%)", format="%.2f"),
-        "CPM (₩)":  st.column_config.NumberColumn("CPM (₩)", format="₩%d"),
-        "CPC (₩)":  st.column_config.NumberColumn("CPC (₩)", format="₩%d"),
+        "노출":      st.column_config.NumberColumn("노출",     format="%,d"),
+        "클릭":      st.column_config.NumberColumn("클릭",     format="%,d"),
+        "광고비":    st.column_config.NumberColumn("광고비",   format="₩%,d"),
+        "CTR (%)":  st.column_config.NumberColumn("CTR (%)", format="%.2f%%"),
+        "CPM (₩)":  st.column_config.NumberColumn("CPM (₩)", format="₩%,d"),
+        "CPC (₩)":  st.column_config.NumberColumn("CPC (₩)", format="₩%,d"),
     }
     if show_conversion:
-        col_config["전환"] = st.column_config.NumberColumn("전환", format="%d")
-        col_config[f"{conv_label} (₩)"] = st.column_config.NumberColumn(f"{conv_label} (₩)", format="₩%d")
+        col_config["전환"] = st.column_config.NumberColumn("전환", format="%,d")
+        col_config[f"{conv_label} (₩)"] = st.column_config.NumberColumn(f"{conv_label} (₩)", format="₩%,d")
     for lbl in funnel_labels:
-        col_config[lbl] = st.column_config.NumberColumn(lbl, format="%d")
+        col_config[lbl] = st.column_config.NumberColumn(lbl, format="%,d")
 
     st.dataframe(total_df, use_container_width=True, hide_index=True)
     st.dataframe(show, use_container_width=True, hide_index=True, column_config=col_config)
@@ -934,18 +934,18 @@ def render_adgroup_table(df, conv_label, key, show_conversion=True, funnel_steps
 
     # ★ ag_col_config를 if 블록 바깥에 먼저 정의
     ag_col_config = {
-        "노출":      st.column_config.NumberColumn("노출",     format="%d"),
-        "클릭":      st.column_config.NumberColumn("클릭",     format="%d"),
-        "광고비":    st.column_config.NumberColumn("광고비",   format="₩%d"),
-        "CTR (%)":  st.column_config.NumberColumn("CTR (%)", format="%.2f"),
-        "CPM (₩)":  st.column_config.NumberColumn("CPM (₩)", format="₩%d"),
-        "CPC (₩)":  st.column_config.NumberColumn("CPC (₩)", format="₩%d"),
+        "노출":      st.column_config.NumberColumn("노출",     format="%,d"),
+        "클릭":      st.column_config.NumberColumn("클릭",     format="%,d"),
+        "광고비":    st.column_config.NumberColumn("광고비",   format="₩%,d"),
+        "CTR (%)":  st.column_config.NumberColumn("CTR (%)", format="%.2f%%"),
+        "CPM (₩)":  st.column_config.NumberColumn("CPM (₩)", format="₩%,d"),
+        "CPC (₩)":  st.column_config.NumberColumn("CPC (₩)", format="₩%,d"),
     }
     if show_conversion:
-        ag_col_config["전환"] = st.column_config.NumberColumn("전환", format="%d")
-        ag_col_config[f"{conv_label} (₩)"] = st.column_config.NumberColumn(f"{conv_label} (₩)", format="₩%d")
+        ag_col_config["전환"] = st.column_config.NumberColumn("전환", format="%,d")
+        ag_col_config[f"{conv_label} (₩)"] = st.column_config.NumberColumn(f"{conv_label} (₩)", format="₩%,d")
     for lbl in funnel_labels:
-        ag_col_config[lbl] = st.column_config.NumberColumn(lbl, format="%d")
+        ag_col_config[lbl] = st.column_config.NumberColumn(lbl, format="%,d")
 
     if unit == "광고그룹 합계":
         agg_dict = _make_agg_dict(df_f)
@@ -1190,19 +1190,19 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True,
 
     show = g[cols_show].rename(columns={"creative": "소재"}).sort_values("광고비", ascending=False)
     cre_col_config = {
-        "노출":      st.column_config.NumberColumn("노출",     format="%d"),
-        "클릭":      st.column_config.NumberColumn("클릭",     format="%d"),
-        "광고비":    st.column_config.NumberColumn("광고비",   format="₩%d"),
-        "CTR (%)":  st.column_config.NumberColumn("CTR (%)", format="%.2f"),
-        "CPM (₩)":  st.column_config.NumberColumn("CPM (₩)", format="₩%d"),
-        "CPC (₩)":  st.column_config.NumberColumn("CPC (₩)", format="₩%d"),
+        "노출":      st.column_config.NumberColumn("노출",     format="%,d"),
+        "클릭":      st.column_config.NumberColumn("클릭",     format="%,d"),
+        "광고비":    st.column_config.NumberColumn("광고비",   format="₩%,d"),
+        "CTR (%)":  st.column_config.NumberColumn("CTR (%)", format="%.2f%%"),
+        "CPM (₩)":  st.column_config.NumberColumn("CPM (₩)", format="₩%,d"),
+        "CPC (₩)":  st.column_config.NumberColumn("CPC (₩)", format="₩%,d"),
     }
     if show_conv:
-        cre_col_config["전환"] = st.column_config.NumberColumn("전환", format="%d")
-        cre_col_config["CVR (%)"] = st.column_config.NumberColumn("CVR (%)", format="%.2f")
-        cre_col_config[f"{conv_label} (₩)"] = st.column_config.NumberColumn(f"{conv_label} (₩)", format="₩%d")
+        cre_col_config["전환"] = st.column_config.NumberColumn("전환", format="%,d")
+        cre_col_config["CVR (%)"] = st.column_config.NumberColumn("CVR (%)", format="%.2f%%")
+        cre_col_config[f"{conv_label} (₩)"] = st.column_config.NumberColumn(f"{conv_label} (₩)", format="₩%,d")
     for lbl in funnel_labels:
-        cre_col_config[lbl] = st.column_config.NumberColumn(lbl, format="%d")
+        cre_col_config[lbl] = st.column_config.NumberColumn(lbl, format="%,d")
 
     st.dataframe(show, use_container_width=True, hide_index=True, column_config=cre_col_config)
     st.divider()
