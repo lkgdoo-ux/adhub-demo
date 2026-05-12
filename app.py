@@ -48,6 +48,36 @@ def q(sql, params=(), fetch=True):
 def safe_div(a, b):
     return (a / b) if b else 0
 
+# ============ 열 그룹 색상 스타일러 ============
+_COL_GROUP_COLORS = {
+    "cost_group":  "#FFF3E0",   # 연한 주황 — 광고비
+    "eff_group":   "#E8F5E9",   # 연한 초록 — CTR/CPC
+    "conv_group":  "#EDE7F6",   # 연한 보라 — 구매/CVR/CPA
+}
+
+def _style_col_groups(df: pd.DataFrame, conv_label: str = "CPA") -> pd.io.formats.style.Styler:
+    cost_cols = {"광고비"}
+    eff_cols  = {"CTR (%)", "CPM (₩)", "CPC (₩)"}
+    conv_cols = {f"전환", "CVR (%)", f"{conv_label} (₩)",
+                 f"CVR·{conv_label}", f"CPA·{conv_label}"}
+    # CVR·xxx / CPA·xxx 패턴도 포함
+    conv_pattern_cols = {c for c in df.columns
+                         if c.startswith("CVR·") or c.startswith("CPA·") or c == "CVR (%)"}
+
+    def _color_col(col_name):
+        if col_name in cost_cols:
+            return f"background-color: {_COL_GROUP_COLORS['cost_group']}"
+        if col_name in eff_cols:
+            return f"background-color: {_COL_GROUP_COLORS['eff_group']}"
+        if col_name in conv_cols or col_name in conv_pattern_cols:
+            return f"background-color: {_COL_GROUP_COLORS['conv_group']}"
+        return ""
+
+    styles = {col: _color_col(col) for col in df.columns}
+    return df.style.apply(
+        lambda col: [styles.get(col.name, "")] * len(col), axis=0
+    )
+
 # ============ DB 초기화 ============
 def init_db():
     with engine.connect() as con:
@@ -869,8 +899,10 @@ def render_campaign_table(df, conv_label, key, show_conversion=True, funnel_step
         col_config[lbl] = st.column_config.NumberColumn(lbl, format="%,d")
 
     st.dataframe(total_df, use_container_width=True, hide_index=True)
-    st.dataframe(show, use_container_width=True, hide_index=True, column_config=col_config)
-
+    st.dataframe(
+        _style_col_groups(show, conv_label),
+        use_container_width=True, hide_index=True, column_config=col_config
+    )
 
 # ============ 광고그룹 테이블 ============
 def render_adgroup_table(df, conv_label, key, show_conversion=True, funnel_steps=None):
@@ -958,7 +990,10 @@ def render_adgroup_table(df, conv_label, key, show_conversion=True, funnel_steps
         total_df  = total_df[[c for c in out.columns if c in total_df.columns]]
 
         st.dataframe(total_df, use_container_width=True, hide_index=True)
-        st.dataframe(out, use_container_width=True, hide_index=True, column_config=ag_col_config)
+        st.dataframe(
+            _style_col_groups(out, conv_label),
+            use_container_width=True, hide_index=True, column_config=ag_col_config
+        )
 
     else:
         total_row = _make_total_row(df_f, {"광고그룹": "🔢 Total", "일자": ""})
@@ -1001,7 +1036,10 @@ def render_adgroup_table(df, conv_label, key, show_conversion=True, funnel_steps
                 ag_total_df = ag_total_df[[c for c in all_cols_total if c in ag_total_df.columns]]
 
                 st.dataframe(ag_total_df, use_container_width=True, hide_index=True)
-                st.dataframe(out_date[show_cols_exp], use_container_width=True, hide_index=True, column_config=ag_col_config)
+                st.dataframe(
+                    _style_col_groups(out_date[show_cols_exp], conv_label),
+                    use_container_width=True, hide_index=True, column_config=ag_col_config
+                )
 
 
 # ============================================================
@@ -1204,7 +1242,10 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True,
     for lbl in funnel_labels:
         cre_col_config[lbl] = st.column_config.NumberColumn(lbl, format="%,d")
 
-    st.dataframe(show, use_container_width=True, hide_index=True, column_config=cre_col_config)
+    st.dataframe(
+        _style_col_groups(show, conv_label),
+        use_container_width=True, hide_index=True, column_config=cre_col_config
+    )
     st.divider()
 
     cc1, cc2 = st.columns(2)
