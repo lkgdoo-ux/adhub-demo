@@ -1,7 +1,7 @@
 # app.py — AdHub v3 (PostgreSQL / Supabase 호환)
 import streamlit as st
 import pandas as pd
-import json, re
+import json, re, base64
 from datetime import datetime
 import plotly.express as px
 import plotly.graph_objects as go
@@ -129,6 +129,20 @@ def init_db():
             cvr_base TEXT DEFAULT 'clicks'
         )"""))
 
+        # ── 신규: 소재 이미지 저장 테이블 ──────────────────────
+        con.execute(text("""
+        CREATE TABLE IF NOT EXISTS creative_images (
+            id SERIAL PRIMARY KEY,
+            advertiser_code TEXT NOT NULL,
+            platform TEXT NOT NULL,
+            creative_name TEXT NOT NULL,
+            image_data TEXT NOT NULL,
+            media_type TEXT NOT NULL DEFAULT 'image/jpeg',
+            uploaded_at TEXT,
+            uploaded_by TEXT,
+            UNIQUE(advertiser_code, platform, creative_name)
+        )"""))
+
         con.execute(text("""
         INSERT INTO users (email, name, role, password) VALUES
             ('admin@adhub.com',  '김에이전시', 'AGENCY_ADMIN', '1234'),
@@ -170,6 +184,45 @@ def create_viewer_account(adv_code, adv_name):
     q("INSERT INTO permissions (email, advertiser_code, level) VALUES (?,?,?)",
       (email, adv_code, "VIEWER"), fetch=False)
     return email, temp_pw
+
+# ============ 소재 이미지 헬퍼 ============
+def get_creative_images(adv_code, platform):
+    """해당 광고주·매체의 소재 이미지 딕셔너리 반환 {creative_name: (image_data_b64, media_type)}"""
+    rows = q("""
+        SELECT creative_name, image_data, media_type
+        FROM creative_images
+        WHERE advertiser_code=? AND platform=?
+    """, (adv_code, platform))
+    return {r[0]: (r[1], r[2]) for r in rows} if rows else {}
+
+def upsert_creative_image(adv_code, platform, creative_name, image_b64, media_type, uploader_email):
+    q("""
+        INSERT INTO creative_images
+            (advertiser_code, platform, creative_name, image_data, media_type, uploaded_at, uploaded_by)
+        VALUES (?,?,?,?,?,?,?)
+        ON CONFLICT (advertiser_code, platform, creative_name) DO UPDATE SET
+            image_data  = EXCLUDED.image_data,
+            media_type  = EXCLUDED.media_type,
+            uploaded_at = EXCLUDED.uploaded_at,
+            uploaded_by = EXCLUDED.uploaded_by
+    """, (adv_code, platform, creative_name, image_b64, media_type,
+          datetime.now().strftime("%Y-%m-%d %H:%M:%S"), uploader_email), fetch=False)
+
+def delete_creative_image(adv_code, platform, creative_name):
+    q("""
+        DELETE FROM creative_images
+        WHERE advertiser_code=? AND platform=? AND creative_name=?
+    """, (adv_code, platform, creative_name), fetch=False)
+
+def get_distinct_creatives(adv_code, platform):
+    """perf 테이블에서 인식된 소재명 목록 반환"""
+    rows = q("""
+        SELECT DISTINCT creative FROM perf
+        WHERE advertiser_code=? AND platform=?
+          AND creative IS NOT NULL AND creative != '' AND creative != 'None'
+        ORDER BY creative
+    """, (adv_code, platform))
+    return [r[0] for r in rows] if rows else []
 
 # ============ 로그인 ============
 def login_view():
@@ -218,7 +271,6 @@ with st.sidebar:
         sel_name = sel
         st.info(f"권한: **{my_level}**")
 
-    # ── 메뉴 구성 (수정 2: VIEWER는 PDF 리포트 메뉴 미표시) ──
     menu = ["📈 대시보드"]
     if user["role"] not in ("VIEWER",):
         menu.append("📥 PDF 리포트")
@@ -662,7 +714,6 @@ def save_funnel_steps(adv_code, platform, steps):
 
 # ============ 퍼널 컬럼 추가 헬퍼 ============
 def _add_funnel_cols_to_df(df, funnel_steps):
-    """raw_data에서 퍼널 단계별 수치를 파싱해서 df에 컬럼으로 추가"""
     if not funnel_steps or df.empty:
         return df
     df = df.copy()
@@ -676,7 +727,6 @@ def _add_funnel_cols_to_df(df, funnel_steps):
     return df
 
 def _build_funnel_agg_cols(g, funnel_steps):
-    """집계된 df에 퍼널 단계 수치를 합산 컬럼으로 추가 (이미 _funnel_N 컬럼이 있어야 함)"""
     result = g.copy()
     sorted_steps = sorted(funnel_steps, key=lambda x: x["order"])
     for step in sorted_steps:
@@ -686,12 +736,11 @@ def _build_funnel_agg_cols(g, funnel_steps):
     return result
 
 def _add_funnel_rate_cols(g, funnel_steps):
-    """퍼널 CVR / CPA 컬럼 추가"""
     sorted_steps = sorted(funnel_steps, key=lambda x: x["order"])
     for i, step in enumerate(sorted_steps):
         label = step["label"]
         cvr_base = step.get("cvr_base", "clicks")
-        cnt_col = label  # 이미 숫자 컬럼으로 존재
+        cnt_col = label
         if cvr_base == "previous" and i > 0:
             prev_label = sorted_steps[i-1]["label"]
             g[f"CVR·{label}"] = g.apply(
@@ -707,10 +756,9 @@ def _add_funnel_rate_cols(g, funnel_steps):
     return g
 
 def _format_display_df(show, base_cols_plain, conv_label, show_conversion, funnel_steps=None):
-    """숫자 포맷팅 적용"""
     show = show.copy()
     for col in show.columns:
-        if col in base_cols_plain:  # 노출, 클릭, 전환 등 정수형
+        if col in base_cols_plain:
             show[col] = show[col].apply(lambda x: f"{int(x):,}" if pd.notna(x) else "—")
         elif col == "광고비" or ("(₩)" in col and "CVR" not in col and "CPA·" not in col):
             show[col] = show[col].apply(lambda x: f"₩{int(x):,}" if pd.notna(x) else "—")
@@ -725,7 +773,6 @@ def render_campaign_table(df, conv_label, key, show_conversion=True, funnel_step
         base_cols.append("전환")
         metric_cols.append(f"{conv_label} (₩)")
 
-    # 퍼널 컬럼 준비
     df_f = _add_funnel_cols_to_df(df, funnel_steps) if funnel_steps else df
 
     if unit == "캠페인 합계":
@@ -769,7 +816,6 @@ def render_campaign_table(df, conv_label, key, show_conversion=True, funnel_step
         show = show.rename(columns={"campaign":"캠페인"}).sort_values(
             ["일자","광고비"], ascending=[True, False])
 
-    # 숫자 포맷팅
     show = show.copy()
     funnel_labels = [s["label"] for s in funnel_steps] if funnel_steps else []
     plain_int_cols = ["노출","클릭"] + (["전환"] if show_conversion else []) + funnel_labels
@@ -779,7 +825,6 @@ def render_campaign_table(df, conv_label, key, show_conversion=True, funnel_step
         elif col == "광고비" or ("(₩)" in col):
             show[col] = show[col].apply(lambda x: f"₩{int(x):,}" if pd.notna(x) else "—")
 
-    # Total 행
     total_row = {"캠페인": "🔢 Total"}
     if unit == "일자별":
         total_row["일자"] = ""
@@ -814,10 +859,9 @@ def render_campaign_table(df, conv_label, key, show_conversion=True, funnel_step
 
     st.dataframe(total_df, use_container_width=True, hide_index=True)
     st.dataframe(show, use_container_width=True, hide_index=True)
-    # ← CSV 다운로드 버튼 제거 (수정 2)
 
 
-# ============ 광고그룹 테이블 (퍼널 통합 + 일자별 드릴다운) ============
+# ============ 광고그룹 테이블 ============
 def render_adgroup_table(df, conv_label, key, show_conversion=True, funnel_steps=None):
     unit = st.radio("집계 단위", ["광고그룹 합계","일자별"], horizontal=True, key=f"{key}_unit")
     base_cols   = ["노출","클릭","광고비"]
@@ -831,7 +875,6 @@ def render_adgroup_table(df, conv_label, key, show_conversion=True, funnel_steps
     funnel_cpa_cols = [f"CPA·{s['label']}" for s in sorted(funnel_steps, key=lambda x: x["order"])] if funnel_steps else []
     extra_cols = funnel_labels + funnel_cvr_cols + funnel_cpa_cols
 
-    # 퍼널 컬럼 준비
     df_f = _add_funnel_cols_to_df(df, funnel_steps) if funnel_steps else df.copy()
 
     def _make_agg_dict(df_src):
@@ -884,7 +927,6 @@ def render_adgroup_table(df, conv_label, key, show_conversion=True, funnel_steps
                 row[f"CPA·{step['label']}"] = f"₩{int(safe_div(tot_cost, tot_s)):,}" if tot_s else "—"
         return row
 
-    # ── 광고그룹 합계 모드 ──────────────────────────────────
     if unit == "광고그룹 합계":
         agg_dict = _make_agg_dict(df_f)
         g = df_f.groupby("adgroup", as_index=False).agg(**agg_dict)
@@ -896,42 +938,33 @@ def render_adgroup_table(df, conv_label, key, show_conversion=True, funnel_steps
         total_df  = total_df[[c for c in out.columns if c in total_df.columns]]
         st.dataframe(total_df, use_container_width=True, hide_index=True)
         st.dataframe(out, use_container_width=True, hide_index=True)
-        # ← CSV 다운로드 버튼 제거 (수정 2)
 
-    # ── 일자별 드릴다운 모드 ────────────────────────────────
     else:
-        # 광고그룹 전체 합계 (최상단)
         total_row = _make_total_row(df_f, {"광고그룹": "🔢 Total", "일자": ""})
         total_df  = pd.DataFrame([total_row])
 
-        # 광고그룹별 집계 (expander 제목용)
         agg_dict = _make_agg_dict(df_f)
         g_ag = df_f.groupby("adgroup", as_index=False).agg(**agg_dict)
         g_ag = g_ag.sort_values("cost", ascending=False)
 
-        # 전체 Total 먼저 표시
         st.dataframe(total_df[[c for c in (
             ["광고그룹","일자"] + base_cols + metric_cols + extra_cols)
             if c in total_df.columns]], use_container_width=True, hide_index=True)
 
-        # 광고그룹별 expander 안에 일자별 데이터
         for ag_idx, (_, ag_row) in enumerate(g_ag.iterrows()):
             ag_name = ag_row["adgroup"]
             ag_cost = float(ag_row["cost"])
             ag_imp  = int(ag_row["impressions"])
             df_ag   = df_f[df_f["adgroup"] == ag_name]
 
-            ag_safe = re.sub(r"[^\w]", "_", ag_name)[:30]
             with st.expander(
                 f"📂 {ag_name}  (광고비 ₩{ag_cost:,.0f} · 노출 {ag_imp:,})",
                 expanded=False
             ):
-                # 광고그룹 소계 행
                 ag_total_row = _make_total_row(
                     df_ag, {"광고그룹": f"↳ {ag_name} 합계", "일자": ""})
                 ag_total_df = pd.DataFrame([ag_total_row])
 
-                # 일자별 집계
                 agg_dict2 = _make_agg_dict(df_ag)
                 g_date = df_ag.groupby("date", as_index=False).agg(**agg_dict2)
                 g_date["일자"] = pd.to_datetime(g_date["date"]).dt.strftime("%Y-%m-%d")
@@ -948,11 +981,104 @@ def render_adgroup_table(df, conv_label, key, show_conversion=True, funnel_steps
 
                 st.dataframe(ag_total_df, use_container_width=True, hide_index=True)
                 st.dataframe(out_date[show_cols_exp], use_container_width=True, hide_index=True)
-                # ← CSV 다운로드 버튼 제거 (수정 2)
 
 
-# ============ 광고 소재 탭 (수정 1: 퍼널 데이터 완전 통합) ============
-def render_creative_tab(df_pf, platform, key_prefix, show_conv=True, funnel_steps=None):
+# ============================================================
+# 소재 이미지 갤러리 렌더러
+# ============================================================
+def render_creative_image_gallery(creative_images_dict, creative_cost_order, key_prefix=""):
+    """
+    소재 이미지 갤러리를 카드 형태로 표시합니다.
+    creative_images_dict: {creative_name: (b64_data, media_type)}
+    creative_cost_order: 광고비 내림차순 소재명 리스트
+    """
+    # 이미지가 등록된 소재만 필터
+    creatives_with_img = [c for c in creative_cost_order if c in creative_images_dict]
+    creatives_no_img   = [c for c in creative_cost_order if c not in creative_images_dict]
+
+    if not creatives_with_img:
+        st.info("💡 등록된 소재 이미지가 없습니다. '데이터 업로드 → 🖼️ 이미지 업로드' 탭에서 소재별 이미지를 등록해주세요.")
+        return
+
+    st.subheader("🖼️ 소재 이미지 갤러리")
+    st.caption(
+        f"이미지 등록 소재 {len(creatives_with_img)}개 · "
+        f"미등록 {len(creatives_no_img)}개  |  광고비 내림차순 정렬"
+    )
+
+    # 한 행에 표시할 카드 수 선택
+    cols_per_row = st.select_slider(
+        "한 행에 표시할 소재 수",
+        options=[2, 3, 4, 5, 6],
+        value=4,
+        key=f"{key_prefix}_gallery_cols"
+    )
+
+    # 카드 스타일
+    card_style = """
+        <style>
+        .cre-card {
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            padding: 8px;
+            background: #ffffff;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.07);
+            text-align: center;
+            height: 100%;
+        }
+        .cre-card img {
+            width: 100%;
+            border-radius: 6px;
+            object-fit: contain;
+            max-height: 180px;
+        }
+        .cre-card .cre-name {
+            font-size: 11px;
+            color: #374151;
+            margin-top: 6px;
+            word-break: break-all;
+            font-weight: 600;
+            line-height: 1.4;
+        }
+        .cre-card .cre-meta {
+            font-size: 10px;
+            color: #6b7280;
+            margin-top: 2px;
+        }
+        </style>
+    """
+    st.markdown(card_style, unsafe_allow_html=True)
+
+    # 집계 데이터 (비용, CTR 등) 참조용 — 호출부에서 g_summary로 전달받음
+    # 여기서는 이름과 이미지만 표시
+    for i in range(0, len(creatives_with_img), cols_per_row):
+        chunk = creatives_with_img[i : i + cols_per_row]
+        cols  = st.columns(cols_per_row)
+        for j, cre_name in enumerate(chunk):
+            b64_data, media_type = creative_images_dict[cre_name]
+            img_src = f"data:{media_type};base64,{b64_data}"
+            short_name = cre_name if len(cre_name) <= 30 else cre_name[:28] + "…"
+            with cols[j]:
+                st.markdown(
+                    f"""<div class="cre-card">
+                        <img src="{img_src}" alt="{short_name}" />
+                        <div class="cre-name" title="{cre_name}">{short_name}</div>
+                    </div>""",
+                    unsafe_allow_html=True
+                )
+
+    # 미등록 소재 목록 (접을 수 있게)
+    if creatives_no_img:
+        with st.expander(f"⚠️ 이미지 미등록 소재 {len(creatives_no_img)}개 보기"):
+            for nm in creatives_no_img:
+                st.markdown(f"- `{nm}`")
+
+
+# ============================================================
+# 광고 소재 탭 (퍼널 + 이미지 갤러리 통합)
+# ============================================================
+def render_creative_tab(df_pf, platform, key_prefix, show_conv=True,
+                        funnel_steps=None, adv_code=None):
     df_cre = df_pf[df_pf["creative"].notna() & (df_pf["creative"] != "") & (df_pf["creative"] != "None")]
     if df_cre.empty:
         st.info(f"💡 {platform} 매체에 광고 소재 데이터가 없습니다.\n\n"
@@ -999,7 +1125,6 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True, funnel_step
     st.divider()
     st.subheader("🎨 소재별 성과")
 
-    # ── 퍼널 컬럼 준비 ──
     df_f_funnel = _add_funnel_cols_to_df(df_f, funnel_steps) if funnel_steps else df_f
 
     funnel_agg = {}
@@ -1009,7 +1134,6 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True, funnel_step
             if fk in df_f_funnel.columns:
                 funnel_agg[fk] = (fk, "sum")
 
-    # ── 소재별 집계 ──
     g = df_f_funnel.groupby("creative", as_index=False).agg(**{
         "impressions": ("impressions", "sum"),
         "clicks":      ("clicks", "sum"),
@@ -1018,7 +1142,6 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True, funnel_step
         **funnel_agg,
     })
 
-    # ── 기본 지표 컬럼 추가 ──
     g["CTR (%)"] = g.apply(lambda r: round(safe_div(r["clicks"], r["impressions"]) * 100, 2), axis=1)
     g["CPM (₩)"] = g.apply(lambda r: round(safe_div(r["cost"],   r["impressions"]) * 1000), axis=1)
     g["CPC (₩)"] = g.apply(lambda r: round(safe_div(r["cost"],   r["clicks"])),               axis=1)
@@ -1027,7 +1150,6 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True, funnel_step
     g["클릭"]    = g["clicks"]
     base_cols = ["creative", "노출", "클릭", "광고비", "CTR (%)", "CPM (₩)", "CPC (₩)"]
 
-    # ── 퍼널 집계/비율 컬럼 추가 ──
     if funnel_steps:
         g = _build_funnel_agg_cols(g, funnel_steps)
         g = _add_funnel_rate_cols(g, funnel_steps)
@@ -1053,7 +1175,6 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True, funnel_step
         elif col == "광고비" or ("(₩)" in col and "CVR" not in col and "CPA·" not in col):
             show[col] = show[col].apply(lambda x: f"₩{int(x):,}")
     st.dataframe(show, use_container_width=True, hide_index=True)
-    # ← CSV 다운로드 버튼 제거 (수정 2)
     st.divider()
 
     cc1, cc2 = st.columns(2)
@@ -1094,12 +1215,29 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True, funnel_step
         fig.update_layout(height=400, hovermode="x unified", margin=dict(l=10, r=10, t=20, b=20))
         st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_daily_chart")
 
-    # ── 일자별 소재 성과 테이블 ──
+    # ══════════════════════════════════════════════════════════
+    # 🖼️ 소재 이미지 갤러리 (그래프와 일자별 테이블 사이)
+    # ══════════════════════════════════════════════════════════
+    st.divider()
+    if adv_code:
+        creative_images = get_creative_images(adv_code, platform)
+        # 광고비 내림차순 소재 목록
+        creative_cost_order = g.sort_values("cost", ascending=False)["creative"].tolist()
+        render_creative_image_gallery(
+            creative_images,
+            creative_cost_order,
+            key_prefix=key_prefix
+        )
+    else:
+        st.info("💡 소재 이미지를 표시하려면 광고주 코드가 필요합니다.")
+
+    # ══════════════════════════════════════════════════════════
+    # 일자별 소재 성과 테이블
+    # ══════════════════════════════════════════════════════════
     st.divider()
     st.subheader("📅 일자별 소재 성과 테이블")
     st.caption("소재별로 일자 데이터를 펼쳐서 확인할 수 있습니다.")
 
-    # 전체 일자×소재 집계
     daily_funnel_agg = {}
     if funnel_steps:
         for step in funnel_steps:
@@ -1123,7 +1261,6 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True, funnel_step
     daily_cre_agg["CPC (₩)"] = daily_cre_agg.apply(
         lambda r: round(safe_div(r["cost"], r["clicks"])), axis=1)
 
-    # ── 퍼널 컬럼 일자별로도 추가 ──
     if funnel_steps:
         daily_cre_agg = _build_funnel_agg_cols(daily_cre_agg, funnel_steps)
         daily_cre_agg = _add_funnel_rate_cols(daily_cre_agg, funnel_steps)
@@ -1134,20 +1271,39 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True, funnel_step
         daily_cre_agg[f"{conv_label} (₩)"] = daily_cre_agg.apply(
             lambda r: round(safe_div(r["cost"], r["conversions"])) if r["conversions"] else 0, axis=1)
 
-    # 소재 목록 — 광고비 내림차순
     cre_list = (daily_cre_agg.groupby("creative", as_index=False)["cost"].sum()
                 .sort_values("cost", ascending=False)["creative"].tolist())
+
+    # 이미지 로드 (expander 타이틀에 이미지 유무 표시용)
+    creative_images_for_table = get_creative_images(adv_code, platform) if adv_code else {}
 
     for cre_idx, cre_name in enumerate(cre_list):
         df_cre_single = daily_cre_agg[daily_cre_agg["creative"] == cre_name].sort_values("일자")
         cre_cost = float(df_cre_single["cost"].sum())
         cre_imp  = int(df_cre_single["impressions"].sum())
 
-        cre_safe = re.sub(r"[^\w]", "_", cre_name)[:40]
+        has_img = cre_name in creative_images_for_table
+        img_badge = "🖼️ " if has_img else ""
+
         with st.expander(
-            f"🖼️ {cre_name}  (광고비 ₩{cre_cost:,.0f} · 노출 {cre_imp:,})",
+            f"{img_badge}📅 {cre_name}  (광고비 ₩{cre_cost:,.0f} · 노출 {cre_imp:,})",
             expanded=False
         ):
+            # 소재 이미지 (있을 경우 expander 상단에 표시)
+            if has_img:
+                b64_data, media_type = creative_images_for_table[cre_name]
+                img_src = f"data:{media_type};base64,{b64_data}"
+                img_col, info_col = st.columns([1, 3])
+                with img_col:
+                    st.markdown(
+                        f'<img src="{img_src}" style="width:100%;border-radius:8px;'
+                        f'border:1px solid #e5e7eb;object-fit:contain;max-height:140px;" />',
+                        unsafe_allow_html=True
+                    )
+                with info_col:
+                    st.markdown(f"**소재명:** `{cre_name}`")
+                st.markdown("")  # 간격
+
             cre_tot_clk  = int(df_cre_single["clicks"].sum())
             cre_tot_cost = float(df_cre_single["cost"].sum())
             cre_tot_conv = float(df_cre_single["conversions"].sum()) if show_conv else 0
@@ -1168,7 +1324,6 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True, funnel_step
                     f"₩{int(safe_div(cre_tot_cost, cre_tot_conv)):,}"
                     if cre_tot_conv else "—")
 
-            # ── 퍼널 합계 행에도 추가 ──
             if funnel_steps:
                 for step in sorted(funnel_steps, key=lambda x: x["order"]):
                     tot_s = float(df_cre_single[step["label"]].sum()) if step["label"] in df_cre_single.columns else 0
@@ -1176,13 +1331,11 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True, funnel_step
                     cre_total[f"CVR·{step['label']}"] = f"{safe_div(tot_s, cre_tot_clk)*100:.1f}%" if cre_tot_clk else "—"
                     cre_total[f"CPA·{step['label']}"] = f"₩{int(safe_div(cre_tot_cost, tot_s)):,}" if tot_s else "—"
 
-            # 일자별 표시 컬럼 목록
             base_daily_cols = ["일자", "노출", "클릭", "광고비", "CTR (%)", "CPM (₩)", "CPC (₩)"]
             if show_conv:
                 base_daily_cols += ["전환", "CVR (%)", f"{conv_label} (₩)"]
             base_daily_cols += funnel_labels + funnel_cvr_cols + funnel_cpa_cols
 
-            # 일자별 행 포맷팅
             out_daily_cols = ["일자", "impressions", "clicks", "cost", "CTR (%)", "CPM (₩)", "CPC (₩)"]
             if show_conv:
                 out_daily_cols += ["conversions", "CVR (%)", f"{conv_label} (₩)"]
@@ -1197,7 +1350,6 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True, funnel_step
                 "conversions": "전환"
             })
 
-            # 숫자 포맷
             plain_int_daily = ["노출", "클릭", "전환"] + funnel_labels
             for col in out_daily.columns:
                 if col in plain_int_daily:
@@ -1211,7 +1363,189 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True, funnel_step
                 out_daily[[c for c in base_daily_cols if c in out_daily.columns]],
                 use_container_width=True, hide_index=True
             )
-            # ← CSV 다운로드 버튼 제거 (수정 2)
+
+
+# ============================================================
+# 이미지 업로드 섹션 (데이터 업로드 페이지 내)
+# ============================================================
+def render_image_upload_section(adv_code, user_email, can_edit):
+    """
+    소재 이미지 업로드 UI.
+    - 매체 선택
+    - 인식된 소재명 드롭다운
+    - 이미지 업로더
+    - 등록된 이미지 목록 관리
+    """
+    st.subheader("🖼️ 소재 이미지 업로드")
+    st.caption("데이터에서 인식된 소재명을 선택하고 이미지를 등록합니다. 등록된 이미지는 광고소재 탭 갤러리에 표시됩니다.")
+
+    if not can_edit:
+        st.error("⛔ VIEWER 권한은 이미지를 업로드할 수 없습니다.")
+        return
+
+    img_pf = st.radio("매체 선택", ["GOOGLE", "FACEBOOK"], horizontal=True, key="img_up_pf")
+
+    creatives = get_distinct_creatives(adv_code, img_pf)
+    if not creatives:
+        st.warning(f"💡 {img_pf} 매체에 인식된 소재명이 없습니다. 먼저 성과 데이터를 업로드하고 소재 컬럼을 매핑해주세요.")
+        return
+
+    # 현재 등록된 이미지 로드
+    existing_images = get_creative_images(adv_code, img_pf)
+
+    # ── 업로드 폼 ──────────────────────────────────────────
+    st.markdown("#### ➕ 이미지 등록/수정")
+
+    # 소재명 선택 (등록 여부 표시)
+    def fmt_cre(name):
+        badge = "✅ " if name in existing_images else "⬜ "
+        return f"{badge}{name}"
+
+    sel_creative = st.selectbox(
+        "소재명 선택",
+        options=creatives,
+        format_func=fmt_cre,
+        key="img_sel_creative"
+    )
+
+    # 선택된 소재의 기존 이미지 미리보기
+    if sel_creative in existing_images:
+        st.markdown("**현재 등록된 이미지:**")
+        b64_data, media_type = existing_images[sel_creative]
+        img_src = f"data:{media_type};base64,{b64_data}"
+        prev_col, _ = st.columns([1, 3])
+        with prev_col:
+            st.markdown(
+                f'<img src="{img_src}" style="width:100%;border-radius:8px;'
+                f'border:1px solid #e5e7eb;object-fit:contain;max-height:200px;" />',
+                unsafe_allow_html=True
+            )
+        st.caption("새 파일을 업로드하면 교체됩니다.")
+
+    uploaded_img = st.file_uploader(
+        "이미지 파일 선택 (JPG / PNG / GIF / WEBP)",
+        type=["jpg", "jpeg", "png", "gif", "webp"],
+        key=f"img_file_{img_pf}"
+    )
+
+    if uploaded_img:
+        # 업로드된 이미지 미리보기
+        st.markdown("**업로드할 이미지 미리보기:**")
+        prev2_col, _ = st.columns([1, 3])
+        with prev2_col:
+            st.image(uploaded_img, use_container_width=True)
+
+        ext_to_mime = {
+            "jpg": "image/jpeg", "jpeg": "image/jpeg",
+            "png": "image/png", "gif": "image/gif", "webp": "image/webp"
+        }
+        ext = uploaded_img.name.rsplit(".", 1)[-1].lower()
+        media_type = ext_to_mime.get(ext, "image/jpeg")
+
+        if st.button("💾 이미지 저장", type="primary", key="img_save_btn"):
+            img_bytes = uploaded_img.read()
+            img_b64   = base64.b64encode(img_bytes).decode("utf-8")
+            upsert_creative_image(
+                adv_code, img_pf, sel_creative,
+                img_b64, media_type, user_email
+            )
+            st.success(f"✅ '{sel_creative}' 이미지 저장 완료!")
+            st.rerun()
+
+    # ── 일괄 업로드 ────────────────────────────────────────
+    st.divider()
+    st.markdown("#### 📦 파일명으로 일괄 업로드")
+    st.caption(
+        "파일명(확장자 제외)이 소재명과 정확히 일치하면 자동 매핑됩니다.  \n"
+        "예) 파일명 `Artemide_내시노_테이블램프_A.jpg` → 소재명 `Artemide_내시노_테이블램프_A`"
+    )
+
+    bulk_files = st.file_uploader(
+        "이미지 파일 여러 개 선택",
+        type=["jpg", "jpeg", "png", "gif", "webp"],
+        accept_multiple_files=True,
+        key=f"img_bulk_{img_pf}"
+    )
+
+    if bulk_files:
+        ext_to_mime = {
+            "jpg": "image/jpeg", "jpeg": "image/jpeg",
+            "png": "image/png", "gif": "image/gif", "webp": "image/webp"
+        }
+        creatives_set = set(creatives)
+        matched, unmatched = [], []
+        for f in bulk_files:
+            fname_no_ext = f.name.rsplit(".", 1)[0]
+            if fname_no_ext in creatives_set:
+                matched.append((f, fname_no_ext))
+            else:
+                unmatched.append(f.name)
+
+        st.markdown(f"**매핑 결과:** 자동 매핑 {len(matched)}개 · 미매핑 {len(unmatched)}개")
+
+        if matched:
+            # 미리보기 (최대 6개)
+            preview_cols = st.columns(min(len(matched), 4))
+            for idx, (f, cname) in enumerate(matched[:4]):
+                with preview_cols[idx]:
+                    f.seek(0)
+                    st.image(f, caption=cname[:20], use_container_width=True)
+            if len(matched) > 4:
+                st.caption(f"... 외 {len(matched)-4}개")
+
+            if st.button(f"💾 매핑된 {len(matched)}개 저장", type="primary", key="img_bulk_save"):
+                saved = 0
+                for f, cname in matched:
+                    f.seek(0)
+                    ext = f.name.rsplit(".", 1)[-1].lower()
+                    media_type = ext_to_mime.get(ext, "image/jpeg")
+                    img_b64 = base64.b64encode(f.read()).decode("utf-8")
+                    upsert_creative_image(
+                        adv_code, img_pf, cname,
+                        img_b64, media_type, user_email
+                    )
+                    saved += 1
+                st.success(f"✅ {saved}개 이미지 저장 완료!")
+                st.rerun()
+
+        if unmatched:
+            with st.expander(f"⚠️ 미매핑 파일 {len(unmatched)}개 (소재명 불일치)"):
+                for nm in unmatched:
+                    st.markdown(f"- `{nm}`")
+                st.caption("파일명(확장자 제외)이 위의 소재명 목록과 정확히 일치해야 합니다.")
+
+    # ── 등록된 이미지 목록 ──────────────────────────────────
+    st.divider()
+    st.markdown("#### 📋 등록된 이미지 목록")
+
+    existing_images_fresh = get_creative_images(adv_code, img_pf)
+    if not existing_images_fresh:
+        st.info("등록된 이미지가 없습니다.")
+        return
+
+    st.caption(f"총 {len(existing_images_fresh)}개 소재 이미지 등록됨")
+
+    # 갤러리 형태로 표시 + 삭제 버튼
+    cols_per_row_mgmt = 4
+    img_items = list(existing_images_fresh.items())
+
+    for i in range(0, len(img_items), cols_per_row_mgmt):
+        chunk = img_items[i : i + cols_per_row_mgmt]
+        cols  = st.columns(cols_per_row_mgmt)
+        for j, (cre_name, (b64_data, media_type)) in enumerate(chunk):
+            img_src = f"data:{media_type};base64,{b64_data}"
+            short = cre_name if len(cre_name) <= 22 else cre_name[:20] + "…"
+            with cols[j]:
+                st.markdown(
+                    f'<img src="{img_src}" style="width:100%;border-radius:6px;'
+                    f'border:1px solid #e5e7eb;object-fit:contain;max-height:140px;" />',
+                    unsafe_allow_html=True
+                )
+                st.caption(short)
+                if st.button("🗑️ 삭제", key=f"img_del_{img_pf}_{i}_{j}", use_container_width=True):
+                    delete_creative_image(adv_code, img_pf, cre_name)
+                    st.success(f"'{cre_name}' 이미지 삭제됨")
+                    st.rerun()
 
 
 # ============================================================
@@ -1241,7 +1575,6 @@ if page == "📈 대시보드" and adv_code:
         total_budget = 0
         show_conv    = True
 
-    # ── 기간 필터 ──────────────────────────────────────────
     with st.form("dashboard_filter_form"):
         fc1, fc2 = st.columns([3, 1])
         with fc1:
@@ -1286,7 +1619,6 @@ if page == "📈 대시보드" and adv_code:
     tabs = st.tabs(tab_labels)
     tabd = dict(zip(tab_keys, tabs))
 
-    # ── Summary ──────────────────────────────────────────
     with tabd["summary"]:
         st.markdown("##### 매체 선택")
         priority = {"GOOGLE":0,"FACEBOOK":1,"NAVER":2,"KAKAO":3,"TIKTOK":4}
@@ -1334,7 +1666,6 @@ if page == "📈 대시보드" and adv_code:
                     funnel_steps=summary_funnel_steps if summary_funnel_steps else None
                 )
 
-    # ── Google ───────────────────────────────────────────
     if "google" in tabd:
         with tabd["google"]:
             df_g = df_all[df_all["platform"] == "GOOGLE"]
@@ -1375,9 +1706,8 @@ if page == "📈 대시보드" and adv_code:
             df_g = df_all[df_all["platform"] == "GOOGLE"]
             funnel_steps_g = get_funnel_steps(adv_code, "GOOGLE")
             render_creative_tab(df_g, "GOOGLE", key_prefix="g_cre", show_conv=show_conv,
-                                funnel_steps=funnel_steps_g)
+                                funnel_steps=funnel_steps_g, adv_code=adv_code)
 
-    # ── Facebook ──────────────────────────────────────────
     if "facebook" in tabd:
         with tabd["facebook"]:
             df_f2 = df_all[df_all["platform"] == "FACEBOOK"]
@@ -1418,241 +1748,252 @@ if page == "📈 대시보드" and adv_code:
             df_f2 = df_all[df_all["platform"] == "FACEBOOK"]
             funnel_steps_f = get_funnel_steps(adv_code, "FACEBOOK")
             render_creative_tab(df_f2, "FACEBOOK", key_prefix="f_cre", show_conv=show_conv,
-                                funnel_steps=funnel_steps_f)
+                                funnel_steps=funnel_steps_f, adv_code=adv_code)
 
 # ============ 데이터 업로드 ============
 elif page == "📤 데이터 업로드" and adv_code:
-    st.title("📤 로우데이터 업로드")
+    st.title("📤 데이터 업로드")
     if my_level == "VIEWER":
         st.error("⛔ VIEWER 권한은 업로드할 수 없습니다.")
         st.stop()
 
-    platform = st.radio("매체 선택", ["GOOGLE","FACEBOOK"], horizontal=True, key="up_pf")
-    file = st.file_uploader("파일 업로드 (xlsx / csv)", type=["xlsx","xls","csv"], key="up_file")
+    can_edit = (my_level in ("OWNER", "EDITOR")) or is_admin
 
-    if file:
-        cur_sig = f"{file.name}_{file.size}"
-        if st.session_state.get("up_sig") != cur_sig:
-            st.session_state["up_sig"] = cur_sig
-            for k in ["upload_df", "upload_other"]:
-                if k in st.session_state:
-                    del st.session_state[k]
+    # ── 탭으로 구분: 성과 데이터 / 이미지 업로드 ────────────
+    up_tab1, up_tab2 = st.tabs(["📊 성과 데이터 업로드", "🖼️ 소재 이미지 업로드"])
 
-    if file:
-        try:
-            df_raw = read_uploaded_file(file)
-            st.success(f"✅ 파일 읽기 완료 — {len(df_raw):,}행 · {len(df_raw.columns)}개 컬럼")
-            with st.expander("📋 원본 데이터 미리보기 (상위 5행)", expanded=False):
-                st.dataframe(df_raw.head(5), use_container_width=True)
+    with up_tab1:
+        st.markdown("### 📊 로우데이터 업로드")
+        platform = st.radio("매체 선택", ["GOOGLE","FACEBOOK"], horizontal=True, key="up_pf")
+        file = st.file_uploader("파일 업로드 (xlsx / csv)", type=["xlsx","xls","csv"], key="up_file")
 
-            st.divider()
-            st.subheader("🔗 컬럼 매핑")
-            st.caption("각 표준 필드에 사용할 원본 컬럼을 지정하세요.")
+        if file:
+            cur_sig = f"{file.name}_{file.size}"
+            if st.session_state.get("up_sig") != cur_sig:
+                st.session_state["up_sig"] = cur_sig
+                for k in ["upload_df", "upload_other"]:
+                    if k in st.session_state:
+                        del st.session_state[k]
 
-            cols = ["(선택안함)"] + list(df_raw.columns)
-            def safe_idx(guess):
-                return cols.index(guess) if guess in cols else 0
+        if file:
+            try:
+                df_raw = read_uploaded_file(file)
+                st.success(f"✅ 파일 읽기 완료 — {len(df_raw):,}행 · {len(df_raw.columns)}개 컬럼")
+                with st.expander("📋 원본 데이터 미리보기 (상위 5행)", expanded=False):
+                    st.dataframe(df_raw.head(5), use_container_width=True)
 
-            g_date = guess_column(df_raw.columns, DATE_CANDS)
-            g_camp = guess_column(df_raw.columns, CAMP_CANDS)
-            g_ag   = guess_column(df_raw.columns, AG_CANDS)
-            g_imp  = guess_column(df_raw.columns, IMP_CANDS)
-            g_clk  = guess_column(df_raw.columns, CLK_CANDS)
-            g_cost = guess_column(df_raw.columns, COST_CANDS)
-            g_cre  = guess_column(df_raw.columns, CREATIVE_CANDS)
+                st.divider()
+                st.subheader("🔗 컬럼 매핑")
+                st.caption("각 표준 필드에 사용할 원본 컬럼을 지정하세요.")
 
-            mc1, mc2, mc3 = st.columns(3)
-            with mc1:
-                col_date = st.selectbox("📅 일자 *", cols, index=safe_idx(g_date), key="map_date")
-                col_imp  = st.selectbox("👁️ 노출수 *", cols, index=safe_idx(g_imp),  key="map_imp")
-            with mc2:
-                col_camp = st.selectbox("📁 캠페인 *", cols, index=safe_idx(g_camp), key="map_camp")
-                col_clk  = st.selectbox("🖱️ 클릭수 *", cols, index=safe_idx(g_clk),  key="map_clk")
-            with mc3:
-                col_ag   = st.selectbox("📂 광고그룹", cols, index=safe_idx(g_ag),   key="map_ag")
-                col_cost = st.selectbox("💰 비용 *",   cols, index=safe_idx(g_cost), key="map_cost")
+                cols = ["(선택안함)"] + list(df_raw.columns)
+                def safe_idx(guess):
+                    return cols.index(guess) if guess in cols else 0
 
-            st.markdown("##### 🎨 광고 소재 (선택)")
-            scol1, scol2 = st.columns([1, 2])
-            with scol1:
-                use_creative = st.checkbox("소재 데이터 포함", value=bool(g_cre), key="map_use_creative")
-            with scol2:
-                if use_creative:
-                    col_cre = st.selectbox("🎨 광고 소재 컬럼", cols, index=safe_idx(g_cre),
-                                           key="map_cre", label_visibility="collapsed")
-                else:
-                    col_cre = "(선택안함)"
+                g_date = guess_column(df_raw.columns, DATE_CANDS)
+                g_camp = guess_column(df_raw.columns, CAMP_CANDS)
+                g_ag   = guess_column(df_raw.columns, AG_CANDS)
+                g_imp  = guess_column(df_raw.columns, IMP_CANDS)
+                g_clk  = guess_column(df_raw.columns, CLK_CANDS)
+                g_cost = guess_column(df_raw.columns, COST_CANDS)
+                g_cre  = guess_column(df_raw.columns, CREATIVE_CANDS)
 
-            cost_unit = "KRW (원본 그대로)"
-            if platform == "FACEBOOK":
-                cost_unit = st.radio("💱 비용 통화",
-                    ["KRW (원본 그대로)","USD → KRW 환산 (× 1,300)"],
-                    horizontal=True, key="map_currency",
-                    index=1 if (col_cost and "USD" in col_cost.upper()) else 0)
+                mc1, mc2, mc3 = st.columns(3)
+                with mc1:
+                    col_date = st.selectbox("📅 일자 *", cols, index=safe_idx(g_date), key="map_date")
+                    col_imp  = st.selectbox("👁️ 노출수 *", cols, index=safe_idx(g_imp),  key="map_imp")
+                with mc2:
+                    col_camp = st.selectbox("📁 캠페인 *", cols, index=safe_idx(g_camp), key="map_camp")
+                    col_clk  = st.selectbox("🖱️ 클릭수 *", cols, index=safe_idx(g_clk),  key="map_clk")
+                with mc3:
+                    col_ag   = st.selectbox("📂 광고그룹", cols, index=safe_idx(g_ag),   key="map_ag")
+                    col_cost = st.selectbox("💰 비용 *",   cols, index=safe_idx(g_cost), key="map_cost")
 
-            mapped = {col_date, col_camp, col_ag, col_imp, col_clk, col_cost, col_cre}
-            mapped.discard("(선택안함)")
-            other_numeric = []
-            for c in df_raw.columns:
-                if c in mapped:
-                    continue
-                try:
-                    pd.to_numeric(df_raw[c], errors="raise")
-                    other_numeric.append(c)
-                except:
-                    continue
-
-            if other_numeric:
-                st.caption(f"📌 raw_data에 저장될 전환 후보 컬럼: **{', '.join(other_numeric)}**")
-
-            st.divider()
-            st.subheader("📦 업로드 방식 선택")
-            mode = st.radio("업로드 모드",
-                ["① 추가 (Append)",
-                 "② 기간 덮어쓰기 (Upsert by Date) — 권장",
-                 "③ 매체 전체 초기화 (Replace All)"],
-                index=1, key="up_mode")
-
-            if mode.startswith("①"):
-                st.info("**① 추가** — 기존 데이터를 두고 새 행을 덧붙입니다. 같은 파일을 두 번 올리면 데이터가 2배로 늘어납니다.")
-            elif mode.startswith("②"):
-                st.success("**② 기간 덮어쓰기** — 파일에 포함된 날짜 범위의 기존 데이터를 삭제 후 교체합니다. ⭐ 가장 안전한 방법")
-            else:
-                st.error("**③ 전체 초기화** — 해당 매체의 모든 기존 데이터를 삭제합니다. 되돌릴 수 없습니다.")
-
-            st.divider()
-
-            if st.button("🔄 변환 실행 & 미리보기", type="secondary"):
-                required = {"일자": col_date, "캠페인": col_camp,
-                            "노출수": col_imp, "클릭수": col_clk, "비용": col_cost}
-                missing = [k for k, v in required.items() if v == "(선택안함)"]
-                if missing:
-                    st.error(f"❌ 필수 항목 미지정: {', '.join(missing)}")
-                else:
-                    df = pd.DataFrame(index=df_raw.index)
-                    df["date"]        = pd.to_datetime(df_raw[col_date], errors="coerce").dt.strftime("%Y-%m-%d")
-                    df["campaign"]    = df_raw[col_camp].astype(str)
-                    df["adgroup"]     = df_raw[col_ag].astype(str) if col_ag != "(선택안함)" else df["campaign"]
-                    df["impressions"] = pd.to_numeric(df_raw[col_imp],  errors="coerce").fillna(0).astype(int)
-                    df["clicks"]      = pd.to_numeric(df_raw[col_clk],  errors="coerce").fillna(0).astype(int)
-                    df["cost"]        = pd.to_numeric(df_raw[col_cost], errors="coerce").fillna(0)
-                    if cost_unit.startswith("USD"):
-                        df["cost"] = df["cost"] * 1300
-                    df["creative"] = df_raw[col_cre].astype(str) if col_cre != "(선택안함)" else None
-
-                    def make_raw(idx):
-                        d = {}
-                        for c in other_numeric:
-                            v = df_raw.loc[idx, c]
-                            try:
-                                d[c] = float(v) if pd.notna(v) else 0
-                            except:
-                                d[c] = 0
-                        return json.dumps(d, ensure_ascii=False)
-
-                    df["raw_data"] = [make_raw(i) for i in df.index]
-                    df = df.dropna(subset=["date"])
-
-                    if df.empty:
-                        st.error("❌ 일자 컬럼이 인식되지 않았습니다.")
+                st.markdown("##### 🎨 광고 소재 (선택)")
+                scol1, scol2 = st.columns([1, 2])
+                with scol1:
+                    use_creative = st.checkbox("소재 데이터 포함", value=bool(g_cre), key="map_use_creative")
+                with scol2:
+                    if use_creative:
+                        col_cre = st.selectbox("🎨 광고 소재 컬럼", cols, index=safe_idx(g_cre),
+                                               key="map_cre", label_visibility="collapsed")
                     else:
-                        st.session_state["upload_df"]    = df.reset_index(drop=True)
-                        st.session_state["upload_other"] = other_numeric
-                        st.success(f"✅ 변환 완료 — {len(df):,}행")
+                        col_cre = "(선택안함)"
 
-            if "upload_df" in st.session_state:
-                df = st.session_state["upload_df"]
-                st.subheader("📊 변환된 데이터 미리보기")
-                st.dataframe(df.head(8), use_container_width=True, hide_index=True)
+                cost_unit = "KRW (원본 그대로)"
+                if platform == "FACEBOOK":
+                    cost_unit = st.radio("💱 비용 통화",
+                        ["KRW (원본 그대로)","USD → KRW 환산 (× 1,300)"],
+                        horizontal=True, key="map_currency",
+                        index=1 if (col_cost and "USD" in col_cost.upper()) else 0)
 
-                kc = st.columns(4)
-                kc[0].metric("총 행수", f"{len(df):,}")
-                kc[1].metric("총 노출", f"{int(df['impressions'].sum()):,}")
-                kc[2].metric("총 클릭", f"{int(df['clicks'].sum()):,}")
-                kc[3].metric("총 비용", f"₩{float(df['cost'].sum()):,.0f}")
+                mapped = {col_date, col_camp, col_ag, col_imp, col_clk, col_cost, col_cre}
+                mapped.discard("(선택안함)")
+                other_numeric = []
+                for c in df_raw.columns:
+                    if c in mapped:
+                        continue
+                    try:
+                        pd.to_numeric(df_raw[c], errors="raise")
+                        other_numeric.append(c)
+                    except:
+                        continue
 
-                if mode.startswith("②"):
-                    dates_in_file = list(df["date"].unique())
-                    ph = ",".join(["?" for _ in dates_in_file])
-                    will_delete = q(
-                        f"SELECT COUNT(*) FROM perf WHERE advertiser_code=? AND platform=? AND date IN ({ph})",
-                        (adv_code, platform, *dates_in_file))[0][0]
-                    st.warning(f"⚠️ 저장 시 기존 **{will_delete:,}행** 삭제 후 새 **{len(df):,}행**으로 교체됩니다.")
-                elif mode.startswith("③"):
-                    will_delete = q(
-                        "SELECT COUNT(*) FROM perf WHERE advertiser_code=? AND platform=?",
-                        (adv_code, platform))[0][0]
-                    st.error(f"🚨 {platform} 매체 전체 **{will_delete:,}행** 삭제 후 새 **{len(df):,}행**으로 교체됩니다.")
+                if other_numeric:
+                    st.caption(f"📌 raw_data에 저장될 전환 후보 컬럼: **{', '.join(other_numeric)}**")
 
-                proceed = True
-                if mode.startswith("③"):
-                    confirm_text = st.text_input(
-                        f"전체 초기화를 진행하려면 **{platform}** 을(를) 그대로 입력하세요", key="confirm_replace")
-                    proceed = (confirm_text.strip().upper() == platform)
-                    if not proceed and confirm_text:
-                        st.warning("입력값이 일치하지 않습니다.")
+                st.divider()
+                st.subheader("📦 업로드 방식 선택")
+                mode = st.radio("업로드 모드",
+                    ["① 추가 (Append)",
+                     "② 기간 덮어쓰기 (Upsert by Date) — 권장",
+                     "③ 매체 전체 초기화 (Replace All)"],
+                    index=1, key="up_mode")
 
-                btn_label = {"①":"💾 추가 저장","②":"💾 덮어쓰기 저장","③":"🚨 초기화 후 저장"}[mode[0]]
+                if mode.startswith("①"):
+                    st.info("**① 추가** — 기존 데이터를 두고 새 행을 덧붙입니다. 같은 파일을 두 번 올리면 데이터가 2배로 늘어납니다.")
+                elif mode.startswith("②"):
+                    st.success("**② 기간 덮어쓰기** — 파일에 포함된 날짜 범위의 기존 데이터를 삭제 후 교체합니다. ⭐ 가장 안전한 방법")
+                else:
+                    st.error("**③ 전체 초기화** — 해당 매체의 모든 기존 데이터를 삭제합니다. 되돌릴 수 없습니다.")
 
-                if st.button(btn_label, type="primary", disabled=not proceed):
-                    with engine.connect() as con:
-                        deleted = 0
-                        if mode.startswith("②"):
-                            dates_in_file = list(df["date"].unique())
-                            ph = ",".join([f"'{d}'" for d in dates_in_file])
-                            r = con.execute(text(
-                                f"DELETE FROM perf WHERE advertiser_code='{adv_code}' "
-                                f"AND platform='{platform}' AND date IN ({ph})"))
-                            deleted = r.rowcount
-                        elif mode.startswith("③"):
-                            r = con.execute(text(
-                                f"DELETE FROM perf WHERE advertiser_code='{adv_code}' "
-                                f"AND platform='{platform}'"))
-                            deleted = r.rowcount
+                st.divider()
 
-                        r2 = con.execute(text("""
-                            INSERT INTO upload_log
-                                (email, advertiser_code, platform, file_name, rows,
-                                uploaded_at, upload_mode, deleted_rows)
-                            VALUES (:email,:adv,:pf,:fn,:rows,:ts,:mode,:deleted_rows)
-                            RETURNING id
-                        """), dict(email=user["email"], adv=adv_code, pf=platform,
-                                   fn=file.name, rows=len(df),
-                                   ts=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                   mode=mode, deleted_rows=deleted))
-                        upload_id = r2.fetchone()[0]
+                if st.button("🔄 변환 실행 & 미리보기", type="secondary"):
+                    required = {"일자": col_date, "캠페인": col_camp,
+                                "노출수": col_imp, "클릭수": col_clk, "비용": col_cost}
+                    missing = [k for k, v in required.items() if v == "(선택안함)"]
+                    if missing:
+                        st.error(f"❌ 필수 항목 미지정: {', '.join(missing)}")
+                    else:
+                        df = pd.DataFrame(index=df_raw.index)
+                        df["date"]        = pd.to_datetime(df_raw[col_date], errors="coerce").dt.strftime("%Y-%m-%d")
+                        df["campaign"]    = df_raw[col_camp].astype(str)
+                        df["adgroup"]     = df_raw[col_ag].astype(str) if col_ag != "(선택안함)" else df["campaign"]
+                        df["impressions"] = pd.to_numeric(df_raw[col_imp],  errors="coerce").fillna(0).astype(int)
+                        df["clicks"]      = pd.to_numeric(df_raw[col_clk],  errors="coerce").fillna(0).astype(int)
+                        df["cost"]        = pd.to_numeric(df_raw[col_cost], errors="coerce").fillna(0)
+                        if cost_unit.startswith("USD"):
+                            df["cost"] = df["cost"] * 1300
+                        df["creative"] = df_raw[col_cre].astype(str) if col_cre != "(선택안함)" else None
 
-                        rows_to_insert = []
-                        for _, row in df.iterrows():
-                            cre_val = row["creative"] if ("creative" in df.columns and pd.notna(row["creative"])) else None
-                            rows_to_insert.append(dict(
-                                adv=adv_code, pf=platform,
-                                date=row["date"], camp=row["campaign"], ag=row["adgroup"],
-                                imp=int(row["impressions"]), clk=int(row["clicks"]),
-                                cost=float(row["cost"]), raw=row["raw_data"],
-                                uid=upload_id, cre=cre_val))
+                        def make_raw(idx):
+                            d = {}
+                            for c in other_numeric:
+                                v = df_raw.loc[idx, c]
+                                try:
+                                    d[c] = float(v) if pd.notna(v) else 0
+                                except:
+                                    d[c] = 0
+                            return json.dumps(d, ensure_ascii=False)
 
-                        con.execute(text("""
-                            INSERT INTO perf
-                                (advertiser_code, platform, date, campaign, adgroup,
-                                 impressions, clicks, cost, raw_data, upload_log_id, creative)
-                            VALUES
-                                (:adv, :pf, :date, :camp, :ag,
-                                 :imp, :clk, :cost, :raw, :uid, :cre)
-                        """), rows_to_insert)
+                        df["raw_data"] = [make_raw(i) for i in df.index]
+                        df = df.dropna(subset=["date"])
 
-                        con.commit()
+                        if df.empty:
+                            st.error("❌ 일자 컬럼이 인식되지 않았습니다.")
+                        else:
+                            st.session_state["upload_df"]    = df.reset_index(drop=True)
+                            st.session_state["upload_other"] = other_numeric
+                            st.success(f"✅ 변환 완료 — {len(df):,}행")
 
-                    msg = f"🎉 완료! 기존 {deleted:,}행 삭제 → 새 {len(df):,}행 저장" if deleted else f"🎉 {len(df):,}행 저장 완료!"
-                    st.success(msg)
-                    for k in ["upload_df","upload_other","up_sig"]:
-                        if k in st.session_state:
-                            del st.session_state[k]
-                    st.balloons()
+                if "upload_df" in st.session_state:
+                    df = st.session_state["upload_df"]
+                    st.subheader("📊 변환된 데이터 미리보기")
+                    st.dataframe(df.head(8), use_container_width=True, hide_index=True)
 
-        except Exception as e:
-            st.error(f"파일 처리 오류: {e}")
-            import traceback; st.code(traceback.format_exc())
+                    kc = st.columns(4)
+                    kc[0].metric("총 행수", f"{len(df):,}")
+                    kc[1].metric("총 노출", f"{int(df['impressions'].sum()):,}")
+                    kc[2].metric("총 클릭", f"{int(df['clicks'].sum()):,}")
+                    kc[3].metric("총 비용", f"₩{float(df['cost'].sum()):,.0f}")
+
+                    if mode.startswith("②"):
+                        dates_in_file = list(df["date"].unique())
+                        ph = ",".join(["?" for _ in dates_in_file])
+                        will_delete = q(
+                            f"SELECT COUNT(*) FROM perf WHERE advertiser_code=? AND platform=? AND date IN ({ph})",
+                            (adv_code, platform, *dates_in_file))[0][0]
+                        st.warning(f"⚠️ 저장 시 기존 **{will_delete:,}행** 삭제 후 새 **{len(df):,}행**으로 교체됩니다.")
+                    elif mode.startswith("③"):
+                        will_delete = q(
+                            "SELECT COUNT(*) FROM perf WHERE advertiser_code=? AND platform=?",
+                            (adv_code, platform))[0][0]
+                        st.error(f"🚨 {platform} 매체 전체 **{will_delete:,}행** 삭제 후 새 **{len(df):,}행**으로 교체됩니다.")
+
+                    proceed = True
+                    if mode.startswith("③"):
+                        confirm_text = st.text_input(
+                            f"전체 초기화를 진행하려면 **{platform}** 을(를) 그대로 입력하세요", key="confirm_replace")
+                        proceed = (confirm_text.strip().upper() == platform)
+                        if not proceed and confirm_text:
+                            st.warning("입력값이 일치하지 않습니다.")
+
+                    btn_label = {"①":"💾 추가 저장","②":"💾 덮어쓰기 저장","③":"🚨 초기화 후 저장"}[mode[0]]
+
+                    if st.button(btn_label, type="primary", disabled=not proceed):
+                        with engine.connect() as con:
+                            deleted = 0
+                            if mode.startswith("②"):
+                                dates_in_file = list(df["date"].unique())
+                                ph = ",".join([f"'{d}'" for d in dates_in_file])
+                                r = con.execute(text(
+                                    f"DELETE FROM perf WHERE advertiser_code='{adv_code}' "
+                                    f"AND platform='{platform}' AND date IN ({ph})"))
+                                deleted = r.rowcount
+                            elif mode.startswith("③"):
+                                r = con.execute(text(
+                                    f"DELETE FROM perf WHERE advertiser_code='{adv_code}' "
+                                    f"AND platform='{platform}'"))
+                                deleted = r.rowcount
+
+                            r2 = con.execute(text("""
+                                INSERT INTO upload_log
+                                    (email, advertiser_code, platform, file_name, rows,
+                                    uploaded_at, upload_mode, deleted_rows)
+                                VALUES (:email,:adv,:pf,:fn,:rows,:ts,:mode,:deleted_rows)
+                                RETURNING id
+                            """), dict(email=user["email"], adv=adv_code, pf=platform,
+                                       fn=file.name, rows=len(df),
+                                       ts=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                       mode=mode, deleted_rows=deleted))
+                            upload_id = r2.fetchone()[0]
+
+                            rows_to_insert = []
+                            for _, row in df.iterrows():
+                                cre_val = row["creative"] if ("creative" in df.columns and pd.notna(row["creative"])) else None
+                                rows_to_insert.append(dict(
+                                    adv=adv_code, pf=platform,
+                                    date=row["date"], camp=row["campaign"], ag=row["adgroup"],
+                                    imp=int(row["impressions"]), clk=int(row["clicks"]),
+                                    cost=float(row["cost"]), raw=row["raw_data"],
+                                    uid=upload_id, cre=cre_val))
+
+                            con.execute(text("""
+                                INSERT INTO perf
+                                    (advertiser_code, platform, date, campaign, adgroup,
+                                     impressions, clicks, cost, raw_data, upload_log_id, creative)
+                                VALUES
+                                    (:adv, :pf, :date, :camp, :ag,
+                                     :imp, :clk, :cost, :raw, :uid, :cre)
+                            """), rows_to_insert)
+
+                            con.commit()
+
+                        msg = f"🎉 완료! 기존 {deleted:,}행 삭제 → 새 {len(df):,}행 저장" if deleted else f"🎉 {len(df):,}행 저장 완료!"
+                        st.success(msg)
+                        for k in ["upload_df","upload_other","up_sig"]:
+                            if k in st.session_state:
+                                del st.session_state[k]
+                        st.balloons()
+
+            except Exception as e:
+                st.error(f"파일 처리 오류: {e}")
+                import traceback; st.code(traceback.format_exc())
+
+    # ── 이미지 업로드 탭 ──────────────────────────────────
+    with up_tab2:
+        render_image_upload_section(adv_code, user["email"], can_edit)
 
 # ============ 업로드 이력 ============
 elif page == "📋 업로드 이력" and adv_code:
@@ -1865,7 +2206,6 @@ elif page == "🎯 전환지표 설정" and adv_code:
                     st.success("삭제됨")
                     st.rerun()
 
-    # ── 퍼널 설정 ──────────────────────────────────────────
     st.divider()
     st.title("🪜 퍼널 단계 설정")
     st.markdown("""
@@ -1932,13 +2272,12 @@ elif page == "🎯 전환지표 설정" and adv_code:
             else:
                 st.session_state[sk] = new_steps
                 save_funnel_steps(adv_code, fpf, new_steps)
-                st.success(f"✅ {fpf} 매체 퍼널 {len(new_steps)}단계 저장 완료 — 대시보드 성과 테이블에 자동 반영됩니다")
+                st.success(f"✅ {fpf} 매체 퍼널 {len(new_steps)}단계 저장 완료")
                 st.rerun()
 
         if new_steps and all(s["label"].strip() for s in new_steps):
             st.divider()
-            st.subheader("👀 퍼널 미리보기 (성과 테이블 통합 형태)")
-            st.caption("💡 저장된 퍼널 기준으로 미리보기합니다. 변경 후 💾 저장을 먼저 눌러주세요.")
+            st.subheader("👀 퍼널 미리보기")
             preview_df = pd.read_sql(
                 "SELECT * FROM perf WHERE advertiser_code=%(adv)s AND platform=%(pf)s",
                 engine, params={"adv": adv_code, "pf": fpf})
@@ -2131,7 +2470,8 @@ elif page == "🏢 광고주 관리":
             confirm = st.text_input(f"확인을 위해 코드 '{del_code}' 를 입력하세요")
             if st.form_submit_button("🗑️ 영구 삭제", type="primary"):
                 if confirm == del_code:
-                    for tbl in ["perf","upload_log","conversion_mapping","permissions","funnel_mapping"]:
+                    for tbl in ["perf","upload_log","conversion_mapping","permissions",
+                                "funnel_mapping","creative_images"]:
                         q(f"DELETE FROM {tbl} WHERE advertiser_code=?", (del_code,), fetch=False)
                     q("DELETE FROM advertisers WHERE code=?", (del_code,), fetch=False)
                     st.success("삭제됨")
