@@ -928,7 +928,7 @@ def render_adgroup_table(df, conv_label, key, show_conversion=True, funnel_steps
             if c in total_df.columns]], use_container_width=True, hide_index=True)
 
         # 광고그룹별 expander 안에 일자별 데이터
-        for _, ag_row in g_ag.iterrows():
+        for ag_idx, (_, ag_row) in enumerate(g_ag.iterrows()):
             ag_name = ag_row["adgroup"]
             ag_cost = float(ag_row["cost"])
             ag_imp  = int(ag_row["impressions"])
@@ -973,7 +973,7 @@ def render_adgroup_table(df, conv_label, key, show_conversion=True, funnel_steps
                     file_name=f"adgroup_{ag_safe}_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
                     mime="text/csv",
                     # [핵심 수정] key에 상위 key prefix를 반드시 포함해야 탭 간 중복 방지
-                    key=f"{key}_ag_{ag_safe}_dl")
+                    key=f"{key}_ag_{ag_idx}_{ag_safe}_dl")
 
 
 # ============ 광고 소재 탭 ============
@@ -1121,7 +1121,7 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True):
     cre_list = (daily_cre_agg.groupby("creative", as_index=False)["cost"].sum()
                 .sort_values("cost", ascending=False)["creative"].tolist())
 
-    for cre_name in cre_list:
+    for cre_idx, cre_name in enumerate(cre_list):
         df_cre_single = daily_cre_agg[daily_cre_agg["creative"] == cre_name].sort_values("일자")
         cre_cost = float(df_cre_single["cost"].sum())
         cre_imp  = int(df_cre_single["impressions"].sum())
@@ -1189,7 +1189,7 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True):
                 data=csv_bytes,
                 file_name=f"creative_{cre_safe}_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
                 mime="text/csv",
-                key=f"{key_prefix}_cre_daily_{cre_safe}_dl",
+                key=f"{key_prefix}_cre_daily_{cre_idx}_{cre_safe}_dl",
             )
 
     # 전체 일자×소재 CSV 다운로드
