@@ -1960,15 +1960,9 @@ elif page == "📤 데이터 업로드" and adv_code:
                                     f"AND date IN ({placeholders})"
                                 ), date_params)
                                 will_delete = result.fetchone()[0]
-                            else:
-                                will_delete = 0
-                            st.warning(f"⚠️ 저장 시 기존 **{will_delete:,}행** 삭제 후 새 **{len(df):,}행**으로 교체됩니다.")
-                        elif mode.startswith("③"):
-                            will_delete_row = q(
-                                "SELECT COUNT(*) FROM perf WHERE advertiser_code=? AND platform=?",
-                                (adv_code, platform))
-                            will_delete = will_delete_row[0][0] if will_delete_row else 0
-                            st.error(f"🚨 {platform} 매체 전체 **{will_delete:,}행** 삭제 후 새 **{len(df):,}행**으로 교체됩니다.")
+                        else:
+                            will_delete = 0
+                        st.warning(f"⚠️ 저장 시 기존 **{will_delete:,}행** 삭제 후 새 **{len(df):,}행**으로 교체됩니다.")
                     elif mode.startswith("③"):
                         will_delete_row = q(
                             "SELECT COUNT(*) FROM perf WHERE advertiser_code=? AND platform=?",
