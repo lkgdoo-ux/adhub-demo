@@ -58,10 +58,12 @@ _COL_GROUP_COLORS = {
 def _style_col_groups(df: pd.DataFrame, conv_label: str = "CPA") -> pd.io.formats.style.Styler:
     cost_cols = {"광고비"}
     eff_cols  = {"CTR (%)", "CPM (₩)", "CPC (₩)"}
-    conv_cols = {f"전환", "CVR (%)", f"{conv_label} (₩)",
-                 f"CVR·{conv_label}", f"CPA·{conv_label}"}
+    conv_cols = {"전환", "CVR (%)", f"{conv_label} (₩)"}
     conv_pattern_cols = {c for c in df.columns
-                         if c.startswith("CVR·") or c.startswith("CPA·") or c == "CVR (%)"}
+                         if c == "CVR (%)"
+                         or c == "구매"
+                         or (c.startswith("CVR·") and c.endswith("구매"))
+                         or (c.startswith("CPA·") and c.endswith("구매"))}
 
     def _color_col(col_name):
         if col_name in cost_cols:
