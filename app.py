@@ -254,18 +254,19 @@ def get_distinct_creatives(adv_code, platform):
 
 # ============ 로그인 ============
 def login_view():
-    st.title("📊 AdHub 로그인")
-    st.caption("데모 계정: admin@adhub.com / manager@scon.com / viewer@scon.com (비번: 1234)")
-    email = st.text_input("이메일")
-    pw = st.text_input("비밀번호", type="password")
-    if st.button("로그인", type="primary"):
-        row = q("SELECT email,name,role FROM users WHERE email=? AND password=?", (email, pw))
-        if row:
-            r = row[0]
-            st.session_state.user = {"email": r[0], "name": r[1], "role": r[2]}
-            st.rerun()
-        else:
-            st.error("로그인 실패")
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.title("📊 Neicon Marketing Report")
+        email = st.text_input("이메일")
+        pw = st.text_input("비밀번호", type="password")
+        if st.button("로그인", type="primary", use_container_width=True):
+            row = q("SELECT email,name,role FROM users WHERE email=? AND password=?", (email, pw))
+            if row:
+                r = row[0]
+                st.session_state.user = {"email": r[0], "name": r[1], "role": r[2]}
+                st.rerun()
+            else:
+                st.error("로그인 실패")
 
 if "user" not in st.session_state:
     login_view()
