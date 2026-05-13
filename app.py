@@ -1946,33 +1946,29 @@ elif page == "📤 데이터 업로드" and adv_code:
                     if mode.startswith("②"):
                         dates_in_file = sorted(set(df["date"].dropna().tolist()))
                         if dates_in_file:
-                            placeholders = ",".join([f":d{i}" for i in range(len(dates_in_file))])
-                            date_params  = {f"d{i}": d for i, d in enumerate(dates_in_file)}
-                            if mode.startswith("②"):
-                                dates_in_file = sorted(set(df["date"].dropna().tolist()))
-                                if dates_in_file:
-                                    # ★ FIX: q() 우회하고 직접 named param으로 처리
-                                    with engine.connect() as con:
-                                        placeholders = ",".join([f":d{i}" for i in range(len(dates_in_file))])
-                                        date_params = {
-                                            "adv": adv_code,
-                                            "pf":  platform,
-                                            **{f"d{i}": d for i, d in enumerate(dates_in_file)}
-                                        }
-                                        result = con.execute(text(
-                                            f"SELECT COUNT(*) FROM perf "
-                                            f"WHERE advertiser_code = :adv "
-                                            f"AND platform = :pf "
-                                            f"AND date IN ({placeholders})"
-                                        ), date_params)
-                                        will_delete = result.fetchone()[0]
-                                else:
-                                    will_delete = 0
-                                st.warning(f"⚠️ 저장 시 기존 **{will_delete:,}행** 삭제 후 새 **{len(df):,}행**으로 교체됩니다.")
+                            with engine.connect() as con:
+                                placeholders = ",".join([f":d{i}" for i in range(len(dates_in_file))])
+                                date_params = {
+                                    "adv": adv_code,
+                                    "pf":  platform,
+                                    **{f"d{i}": d for i, d in enumerate(dates_in_file)}
+                                }
+                                result = con.execute(text(
+                                    f"SELECT COUNT(*) FROM perf "
+                                    f"WHERE advertiser_code = :adv "
+                                    f"AND platform = :pf "
+                                    f"AND date IN ({placeholders})"
+                                ), date_params)
+                                will_delete = result.fetchone()[0]
+                            else:
+                                will_delete = 0
+                            st.warning(f"⚠️ 저장 시 기존 **{will_delete:,}행** 삭제 후 새 **{len(df):,}행**으로 교체됩니다.")
+                        elif mode.startswith("③"):
+                            will_delete_row = q(
+                                "SELECT COUNT(*) FROM perf WHERE advertiser_code=? AND platform=?",
+                                (adv_code, platform))
                             will_delete = will_delete_row[0][0] if will_delete_row else 0
-                        else:
-                            will_delete = 0
-                        st.warning(f"⚠️ 저장 시 기존 **{will_delete:,}행** 삭제 후 새 **{len(df):,}행**으로 교체됩니다.")
+                            st.error(f"🚨 {platform} 매체 전체 **{will_delete:,}행** 삭제 후 새 **{len(df):,}행**으로 교체됩니다.")
                     elif mode.startswith("③"):
                         will_delete_row = q(
                             "SELECT COUNT(*) FROM perf WHERE advertiser_code=? AND platform=?",
