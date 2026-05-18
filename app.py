@@ -256,8 +256,15 @@ def get_distinct_creatives(adv_code, platform):
 def login_view():
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        st.image("로고_블랙.png", width=180)
-        st.title("Neicon Marketing Report")
+        st.markdown(
+            """
+            <div style="display:flex; flex-direction:column; align-items:center; margin-bottom:12px;">
+                <img src="data:image/png;base64,{LOGO_B64}" width="180" style="margin-bottom:12px;" />
+                <h2 style="text-align:center; margin:0;">Neicon Marketing Report</h2>
+            </div>
+            """.replace("{LOGO_B64}", _get_logo_b64()),
+            unsafe_allow_html=True
+        )
         email = st.text_input("이메일")
         pw = st.text_input("비밀번호", type="password")
         if st.button("로그인", type="primary", use_container_width=True):
