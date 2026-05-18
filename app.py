@@ -7,7 +7,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from sqlalchemy import create_engine, text
 
-st.set_page_config(page_title="Neicon Report", page_icon="📊", layout="wide")
+st.set_page_config(page_title="Neicon Report", page_icon="파비콘_0314.png", layout="wide")
 
 # ============ DB 연결 ============
 @st.cache_resource
@@ -256,7 +256,8 @@ def get_distinct_creatives(adv_code, platform):
 def login_view():
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        st.title("📊 Neicon Marketing Report")
+        st.image("로고_블랙.png", width=180)
+        st.title("Neicon Marketing Report")
         email = st.text_input("이메일")
         pw = st.text_input("비밀번호", type="password")
         if st.button("로그인", type="primary", use_container_width=True):
