@@ -257,7 +257,7 @@ def login_view():
     # 로고 base64 인코딩 (파일 없으면 None)
     def _get_logo_b64():
         import os
-        logo_path = "파비콘_0314.png"
+        logo_path = "로고_블랙.png"
         if os.path.exists(logo_path):
             with open(logo_path, "rb") as f:
                 return base64.b64encode(f.read()).decode("utf-8")
