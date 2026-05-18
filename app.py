@@ -254,17 +254,37 @@ def get_distinct_creatives(adv_code, platform):
 
 # ============ 로그인 ============
 def login_view():
+    # 로고 base64 인코딩 (파일 없으면 None)
+    def _get_logo_b64():
+        import os
+        logo_path = "파비콘_0314.png"
+        if os.path.exists(logo_path):
+            with open(logo_path, "rb") as f:
+                return base64.b64encode(f.read()).decode("utf-8")
+        return None
+
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        st.markdown(
-            """
-            <div style="display:flex; flex-direction:column; align-items:center; margin-bottom:12px;">
-                <img src="data:image/png;base64,{LOGO_B64}" width="180" style="margin-bottom:12px;" />
-                <h2 style="text-align:center; margin:0;">Neicon Marketing Report</h2>
-            </div>
-            """.replace("{LOGO_B64}", _get_logo_b64()),
-            unsafe_allow_html=True
-        )
+        logo_b64 = _get_logo_b64()
+        if logo_b64:
+            st.markdown(
+                f"""
+                <div style="display:flex; flex-direction:column; align-items:center; margin-bottom:12px;">
+                    <img src="data:image/png;base64,{logo_b64}" width="180" style="margin-bottom:12px;" />
+                    <h2 style="text-align:center; margin:0;">Neicon Marketing Report</h2>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+        else:
+            st.markdown(
+                """
+                <div style="display:flex; flex-direction:column; align-items:center; margin-bottom:12px;">
+                    <h2 style="text-align:center; margin:0;">Neicon Marketing Report</h2>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
         email = st.text_input("이메일")
         pw = st.text_input("비밀번호", type="password")
         if st.button("로그인", type="primary", use_container_width=True):
