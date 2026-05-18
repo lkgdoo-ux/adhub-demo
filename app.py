@@ -7,7 +7,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from sqlalchemy import create_engine, text
 
-st.set_page_config(page_title="AdHub", page_icon="📊", layout="wide")
+st.set_page_config(page_title="Neicon Report", page_icon="📊", layout="wide")
 
 # ============ DB 연결 ============
 @st.cache_resource
