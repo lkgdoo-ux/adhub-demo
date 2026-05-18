@@ -1883,6 +1883,29 @@ elif page == "📤 데이터 업로드" and adv_code:
                     else:
                         col_cre = "(선택안함)"
 
+                # ★ 추가: 전환 컬럼 매핑 UI
+                st.markdown("##### 🎯 전환 지표 (선택)")
+                st.caption("업로드 시 바로 전환 컬럼을 지정할 수 있습니다. 나중에 '전환지표 설정' 메뉴에서도 변경 가능합니다.")
+                conv_col1, conv_col2, conv_col3 = st.columns([1, 2, 1.5])
+                with conv_col1:
+                    use_conv_map = st.checkbox("전환 컬럼 지정", value=False, key="map_use_conv")
+                with conv_col2:
+                    if use_conv_map:
+                        col_conv = st.selectbox("🎯 전환 컬럼", cols, key="map_conv",
+                                                label_visibility="collapsed")
+                    else:
+                        col_conv = "(선택안함)"
+                with conv_col3:
+                    if use_conv_map:
+                        conv_label_input = st.selectbox(
+                            "표시 레이블",
+                            ["CPI", "CPA", "CPL", "CPV", "CPE"],
+                            key="map_conv_label",
+                            label_visibility="collapsed"
+                        )
+                    else:
+                        conv_label_input = "CPA"
+
                 cost_unit = "KRW (원본 그대로)"
                 if platform == "FACEBOOK":
                     cost_unit = st.radio("💱 비용 통화",
@@ -1958,6 +1981,9 @@ elif page == "📤 데이터 업로드" and adv_code:
                         else:
                             st.session_state["upload_df"]    = df.reset_index(drop=True)
                             st.session_state["upload_other"] = other_numeric
+                            # ★ 추가: 전환 매핑 정보 저장
+                            st.session_state["upload_conv_col"]   = col_conv if use_conv_map else "(선택안함)"
+                            st.session_state["upload_conv_label"] = conv_label_input if use_conv_map else "CPA"
                             st.success(f"✅ 변환 완료 — {len(df):,}행")
 
                 if "upload_df" in st.session_state:
@@ -2099,12 +2125,32 @@ elif page == "📤 데이터 업로드" and adv_code:
                                 # ★ 단일 commit — DELETE + INSERT 원자적 처리
                                 con.commit()
 
+                            # ★ 추가: 전환 매핑 자동 저장
+                            saved_conv_col   = st.session_state.get("upload_conv_col", "(선택안함)")
+                            saved_conv_label = st.session_state.get("upload_conv_label", "CPA")
+                            if saved_conv_col and saved_conv_col != "(선택안함)":
+                                q("""
+                                    INSERT INTO conversion_mapping
+                                        (advertiser_code, platform, campaign,
+                                         conversion_column, conversion_label, updated_at)
+                                    VALUES (?,?,?,?,?,?)
+                                    ON CONFLICT (advertiser_code, platform, campaign) DO UPDATE SET
+                                        conversion_column = EXCLUDED.conversion_column,
+                                        conversion_label  = EXCLUDED.conversion_label,
+                                        updated_at        = EXCLUDED.updated_at
+                                """, (adv_code, platform, "*",
+                                      saved_conv_col, saved_conv_label,
+                                      datetime.now().strftime("%Y-%m-%d %H:%M:%S")), fetch=False)
+
                             msg = (
                                 f"🎉 완료! 기존 {deleted:,}행 삭제 → 새 {len(df):,}행 저장"
                                 if deleted else f"🎉 {len(df):,}행 저장 완료!"
                             )
+                            if saved_conv_col and saved_conv_col != "(선택안함)":
+                                msg += f"\n✅ 전환 매핑 자동 저장: `{saved_conv_col}` → **{saved_conv_label}**"
                             st.success(msg)
-                            for k in ["upload_df","upload_other","up_sig"]:
+                            for k in ["upload_df","upload_other","up_sig",
+                                      "upload_conv_col","upload_conv_label"]:  # ★ 추가된 키도 정리
                                 if k in st.session_state:
                                     del st.session_state[k]
                             st.balloons()
