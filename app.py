@@ -1080,9 +1080,9 @@ def render_adgroup_table(df, conv_label, key, show_conversion=True, funnel_steps
         ag_col_config[f"{conv_label} (₩)"] = st.column_config.NumberColumn(f"{conv_label} (₩)", format="₩%,d")
     for lbl in funnel_labels:
         if _is_roas_step(lbl):
-            col_config[lbl] = st.column_config.NumberColumn(lbl, format="₩%,.0f")
+            ag_col_config[lbl] = st.column_config.NumberColumn(lbl, format="₩%,.0f")
         else:
-            col_config[lbl] = st.column_config.NumberColumn(lbl, format="%,d")
+            ag_col_config[lbl] = st.column_config.NumberColumn(lbl, format="%,d")
     if unit == "광고그룹 합계":
         agg_dict = _make_agg_dict(df_f)
         g = df_f.groupby("adgroup", as_index=False).agg(**agg_dict)
@@ -1336,9 +1336,9 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True,
         cre_col_config[f"{conv_label} (₩)"] = st.column_config.NumberColumn(f"{conv_label} (₩)", format="₩%,d")
     for lbl in funnel_labels:
         if _is_roas_step(lbl):
-            col_config[lbl] = st.column_config.NumberColumn(lbl, format="₩%,.0f")
+            cre_col_config[lbl] = st.column_config.NumberColumn(lbl, format="₩%,.0f")
         else:
-            col_config[lbl] = st.column_config.NumberColumn(lbl, format="%,d")
+            cre_col_config[lbl] = st.column_config.NumberColumn(lbl, format="%,d")
 
     st.dataframe(
         _style_col_groups(show, conv_label),
