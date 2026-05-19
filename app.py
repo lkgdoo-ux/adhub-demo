@@ -50,8 +50,9 @@ def safe_div(a, b):
 
 # ============ 전환값(ROAS) 여부 판별 헬퍼 ============
 def _is_roas_step(label: str) -> bool:
-    """라벨 또는 컬럼명에 '전환값'이 포함되면 ROAS 지표로 취급한다."""
-    return "전환값" in str(label)
+    """라벨 또는 컬럼명에 '전환값' 또는 '매출'이 포함되면 ROAS 지표로 취급한다."""
+    s = str(label)
+    return "전환값" in s or "매출" in s
 
 # ============ 열 그룹 색상 스타일러 ============
 _COL_GROUP_COLORS = {
@@ -795,7 +796,11 @@ def _build_funnel_agg_cols(g, funnel_steps):
     for step in sorted_steps:
         k = f"_funnel_{step['order']}"
         if k in result.columns:
-            result[step["label"]] = result[k].astype(int)
+            if _is_roas_step(step["label"]):
+                # 금액형: float 유지 (화폐 포맷은 표시 단계에서 처리)
+                result[step["label"]] = result[k].astype(float)
+            else:
+                result[step["label"]] = result[k].astype(int)
     return result
 
 # ============================================================
@@ -866,7 +871,6 @@ def _get_funnel_extra_cols(funnel_steps):
 #   Total 행에서 ROAS 단계는 ROAS 값으로, 일반 단계는 CVR/CPA 값으로 채운다.
 # ============================================================
 def _make_funnel_total_vals(total_row, funnel_steps, df_f, tot_clk, tot_cost):
-    """Total 행 dict에 퍼널 집계값(라벨, CVR/ROAS, CPA)을 추가한다."""
     if not funnel_steps:
         return total_row
     sorted_steps = sorted(funnel_steps, key=lambda x: x["order"])
@@ -874,13 +878,15 @@ def _make_funnel_total_vals(total_row, funnel_steps, df_f, tot_clk, tot_cost):
         label = step["label"]
         k = f"_funnel_{step['order']}"
         tot_s = float(df_f[k].sum()) if k in df_f.columns else 0
-        total_row[label] = f"{int(tot_s):,}"
 
+        # ★ 수정: ROAS 단계는 ₩ 포맷
         if _is_roas_step(label):
+            total_row[label] = f"₩{int(tot_s):,}"
             total_row[f"ROAS·{label}"] = (
                 f"{safe_div(tot_s, tot_cost) * 100:.1f}%" if tot_cost > 0 else "—"
             )
         else:
+            total_row[label] = f"{int(tot_s):,}"
             cvr_base = step.get("cvr_base", "clicks")
             if cvr_base == "previous" and i > 0:
                 prev_label = sorted_steps[i-1]["label"]
@@ -993,8 +999,10 @@ def render_campaign_table(df, conv_label, key, show_conversion=True, funnel_step
         col_config["전환"] = st.column_config.NumberColumn("전환", format="%,d")
         col_config[f"{conv_label} (₩)"] = st.column_config.NumberColumn(f"{conv_label} (₩)", format="₩%,d")
     for lbl in funnel_labels:
-        col_config[lbl] = st.column_config.NumberColumn(lbl, format="%,d")
-
+        if _is_roas_step(lbl):
+            col_config[lbl] = st.column_config.NumberColumn(lbl, format="₩%,.0f")
+        else:
+            col_config[lbl] = st.column_config.NumberColumn(lbl, format="%,d")
     st.dataframe(total_df, use_container_width=True, hide_index=True)
     st.dataframe(
         _style_col_groups(show, conv_label),
@@ -1071,8 +1079,10 @@ def render_adgroup_table(df, conv_label, key, show_conversion=True, funnel_steps
         ag_col_config["전환"] = st.column_config.NumberColumn("전환", format="%,d")
         ag_col_config[f"{conv_label} (₩)"] = st.column_config.NumberColumn(f"{conv_label} (₩)", format="₩%,d")
     for lbl in funnel_labels:
-        ag_col_config[lbl] = st.column_config.NumberColumn(lbl, format="%,d")
-
+        if _is_roas_step(lbl):
+            col_config[lbl] = st.column_config.NumberColumn(lbl, format="₩%,.0f")
+        else:
+            col_config[lbl] = st.column_config.NumberColumn(lbl, format="%,d")
     if unit == "광고그룹 합계":
         agg_dict = _make_agg_dict(df_f)
         g = df_f.groupby("adgroup", as_index=False).agg(**agg_dict)
@@ -1325,7 +1335,10 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True,
         cre_col_config["CVR (%)"] = st.column_config.NumberColumn("CVR (%)", format="%.2f%%")
         cre_col_config[f"{conv_label} (₩)"] = st.column_config.NumberColumn(f"{conv_label} (₩)", format="₩%,d")
     for lbl in funnel_labels:
-        cre_col_config[lbl] = st.column_config.NumberColumn(lbl, format="%,d")
+        if _is_roas_step(lbl):
+            col_config[lbl] = st.column_config.NumberColumn(lbl, format="₩%,.0f")
+        else:
+            col_config[lbl] = st.column_config.NumberColumn(lbl, format="%,d")
 
     st.dataframe(
         _style_col_groups(show, conv_label),
@@ -1479,13 +1492,15 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True,
                     fk = f"_funnel_{step['order']}"
                     label = step["label"]
                     tot_s = float(df_cre_funnel_src[fk].sum()) if fk in df_cre_funnel_src.columns else 0
-                    cre_total[label] = f"{int(tot_s):,}"
+                    # ★ 수정: ROAS 단계는 ₩ 포맷
                     if _is_roas_step(label):
+                        cre_total[label] = f"₩{int(tot_s):,}"
                         cre_total[f"ROAS·{label}"] = (
                             f"{safe_div(tot_s, cre_tot_cost) * 100:.1f}%"
                             if cre_tot_cost > 0 else "—"
                         )
                     else:
+                        cre_total[label] = f"{int(tot_s):,}"
                         cre_total[f"CVR·{label}"] = (
                             f"{safe_div(tot_s, cre_tot_clk)*100:.1f}%" if cre_tot_clk else "—"
                         )
@@ -1512,10 +1527,16 @@ def render_creative_tab(df_pf, platform, key_prefix, show_conv=True,
                 "conversions": "전환"
             })
 
-            plain_int_daily = ["노출", "클릭", "전환"] + funnel_labels
+            plain_int_daily = ["노출", "클릭", "전환"] + [
+                lbl for lbl in funnel_labels if not _is_roas_step(lbl)
+            ]
+            roas_money_daily = [lbl for lbl in funnel_labels if _is_roas_step(lbl)]
+
             for col in out_daily.columns:
                 if col in plain_int_daily:
                     out_daily[col] = out_daily[col].apply(lambda x: f"{int(x):,}")
+                elif col in roas_money_daily:
+                    out_daily[col] = out_daily[col].apply(lambda x: f"₩{int(x):,}")
                 elif col == "광고비" or ("(₩)" in col and "CVR" not in col and "CPA·" not in col):
                     out_daily[col] = out_daily[col].apply(lambda x: f"₩{int(x):,}")
 
@@ -2585,13 +2606,15 @@ elif page == "🎯 전환지표 설정" and adv_code:
                                  funnel_labels + extra_cols_prev)
                     show_cols = [c for c in show_cols if c in g.columns]
                     out = g[show_cols].rename(columns={"campaign":"캠페인"}).copy()
+                    roas_labels = [lbl for lbl in funnel_labels if _is_roas_step(lbl)]
+                    int_labels  = [lbl for lbl in funnel_labels if not _is_roas_step(lbl)]
                     for col in out.columns:
-                        if col in ["노출","클릭"] + funnel_labels:
+                        if col in ["노출","클릭"] + int_labels:
                             out[col] = out[col].apply(lambda x: f"{int(x):,}")
+                        elif col in roas_labels:
+                            out[col] = out[col].apply(lambda x: f"₩{int(x):,}" if pd.notna(x) else "—")
                         elif col == "광고비" or "(₩)" in col:
                             out[col] = out[col].apply(lambda x: f"₩{int(x):,}" if pd.notna(x) else "—")
-                    st.dataframe(out, use_container_width=True, hide_index=True)
-
 
 # ============ PDF 리포트 ============
 elif page == "📥 PDF 리포트" and adv_code:
